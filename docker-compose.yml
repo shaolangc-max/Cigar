@@ -40,6 +40,8 @@ services:
   frontend:
     build: ./frontend
     env_file: .env
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001/api/v1}
     depends_on:
       - backend
     ports:

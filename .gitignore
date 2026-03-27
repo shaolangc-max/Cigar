@@ -1,1 +1,19 @@
-backend/venv/\n.env\n__pycache__/\n*.pyc\n.next/\nnode_modules/\n
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Alembic cache
+backend/alembic/__pycache__/
+
+# Node
+node_modules/
+.next/
+*.tsbuildinfo
+
+# Secrets
+.env
+
+# Storage
+backend/storage/

@@ -13,11 +13,12 @@ from app.config import settings
 from app.db import AsyncSessionLocal
 from app.models import Cigar, Source, Price, PriceHistory, ExchangeRate
 from app.scrapers.registry import get_all
-from app.scrapers.matcher import extract_brand, best_match
+from app.scrapers.matcher import best_match
+import app.scrapers.sites  # noqa: F401 — 触发所有爬虫注册
 
 log = logging.getLogger(__name__)
 
-CURRENCIES = ["CNY", "HKD", "USD", "EUR"]
+CURRENCIES = ["CNY", "HKD", "USD", "EUR", "CHF", "GBP", "CAD", "RUB"]
 
 
 async def update_exchange_rates():
