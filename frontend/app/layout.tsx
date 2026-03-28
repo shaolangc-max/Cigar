@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import HeaderNav from "./components/HeaderNav";
 
 export const metadata: Metadata = {
   title: "海淘研究院 | 古巴雪茄比价",
@@ -32,10 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <a href="/" style={{ color: "var(--apple-label)", fontSize: 17, fontWeight: 600, letterSpacing: "-0.02em", textDecoration: "none" }}>
               海淘研究院
             </a>
-            <nav style={{ display: "flex", gap: 28 }}>
-              <a href="/" className="apple-nav-link" style={{ fontSize: 14 }}>品牌</a>
-              <a href="/search" className="apple-nav-link" style={{ fontSize: 14 }}>搜索</a>
-            </nav>
+            <HeaderNav />
           </div>
         </header>
 

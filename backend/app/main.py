@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import brands, cigars, prices, admin
+from app.api import brands, cigars, prices, admin, auth, billing
 
 app = FastAPI(title="Cigar Price API", version="1.0.0")
 
@@ -12,6 +12,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router,    prefix="/api/v1")
+app.include_router(billing.router, prefix="/api/v1")
 app.include_router(brands.router, prefix="/api/v1")
 app.include_router(cigars.router, prefix="/api/v1")
 app.include_router(prices.router, prefix="/api/v1")
