@@ -3,6 +3,7 @@ from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.deps import check_search_quota
 from app.db import get_db
 from app.models import Cigar, Price, Source, ExchangeRate, Series, Brand
 
@@ -83,6 +84,7 @@ async def get_cigar(
 async def search_cigars(
     q: str = Query("", min_length=1),
     db: AsyncSession = Depends(get_db),
+    _quota: None = Depends(check_search_quota),
 ):
     result = await db.execute(
         select(Cigar)

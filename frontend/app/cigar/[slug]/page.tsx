@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { api, CigarDetail, Currency, PriceRow } from "@/lib/api";
 import CurrencySwitcher from "./CurrencySwitcher";
+import PriceHistoryChart from "./PriceHistoryChart";
 
 export const revalidate = 300;
 
@@ -161,6 +162,10 @@ export default async function CigarPage({
   const inStockRows  = data.prices.filter((p) => p.in_stock);
   const outStockRows = data.prices.filter((p) => !p.in_stock);
 
+  // source_id → source_name 映射，传给图表组件
+  const sourcesMap: Record<number, string> = {};
+  for (const p of data.prices) sourcesMap[p.source_id] = p.source_name;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
 
@@ -231,6 +236,31 @@ export default async function CigarPage({
           )}
         </div>
       )}
+
+      {/* 价格历史趋势图 */}
+      <div style={{
+        borderRadius: 16,
+        border: "1px solid var(--apple-border)",
+        backgroundColor: "var(--apple-surface)",
+        padding: "24px 28px",
+        boxShadow: "0 1px 6px rgba(0,0,0,0.04)",
+      }}>
+        <p style={{
+          fontSize: 12,
+          fontWeight: 600,
+          color: "var(--apple-secondary)",
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          margin: "0 0 20px 0",
+        }}>
+          价格历史趋势（单支）
+        </p>
+        <PriceHistoryChart
+          cigarId={data.id}
+          currency={currency}
+          sources={sourcesMap}
+        />
+      </div>
     </div>
   );
 }
