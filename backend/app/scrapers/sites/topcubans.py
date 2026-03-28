@@ -53,6 +53,7 @@ def _parse_brand_page(html: str, source_slug: str) -> list[ScrapedItem]:
             products[url] = {
                 "name": name, "url": url, "currency": currency,
                 "price_single": None, "price_box": None, "box_count": None,
+                "in_stock": False,
             }
 
         count_m = re.search(r"(\d+)\s+Cigars?", qty_text, re.I)
@@ -62,6 +63,10 @@ def _parse_brand_page(html: str, source_slug: str) -> list[ScrapedItem]:
         else:
             products[url]["price_box"]   = price
             products[url]["box_count"]   = count
+
+        # 库存：有 add-to-cart 才算有货（is-not-soldable / is-out-of-stock 均为缺货）
+        if "add-to-cart" in chunk:
+            products[url]["in_stock"] = True
 
     items = []
     for p in products.values():
@@ -73,7 +78,7 @@ def _parse_brand_page(html: str, source_slug: str) -> list[ScrapedItem]:
             price_box    = p["price_box"],
             box_count    = p["box_count"],
             currency     = p["currency"],
-            in_stock     = True,
+            in_stock     = p.get("in_stock", False),
         ))
     return items
 

@@ -1,4 +1,10 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001/api/v1";
+// Server Components (Node.js) need an absolute URL; browsers must use a
+// relative path so requests go through Next.js rewrites regardless of hostname.
+// Evaluated inside the function so it is never frozen at module-init time.
+function getApiBase(): string {
+  if (typeof window !== "undefined") return "/api/v1";
+  return process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api/v1";
+}
 
 export type Currency = "USD" | "CNY" | "HKD" | "EUR";
 
@@ -34,8 +40,11 @@ export interface PriceRow {
   base_url: string;
   product_url: string | null;
   currency: Currency;
+  source_currency: string;
   price_single: number | null;
   price_box: number | null;
+  price_single_src: number | null;
+  price_box_src: number | null;
   box_count: number | null;
   in_stock: boolean;
   scraped_at: string;
@@ -72,7 +81,7 @@ export interface BrandDetail {
 // ── Fetch helpers ─────────────────────────────────────────────────────────
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { next: { revalidate: 300 } });
+  const res = await fetch(`${getApiBase()}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
   return res.json();
 }

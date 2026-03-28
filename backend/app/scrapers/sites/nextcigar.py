@@ -72,8 +72,8 @@ class NextCigarScraper(BaseScraper):
                                 price_single = price if is_stick else None,
                                 price_box    = price if not is_stick else None,
                                 box_count    = box_count if not is_stick else None,
-                                currency     = "HKD",
-                                in_stock     = v.get("available", True),
+                                currency     = "USD",
+                                in_stock     = (v.get("inventory_quantity") or 0) > 0,
                             ))
 
                     page += 1

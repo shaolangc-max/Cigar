@@ -44,17 +44,20 @@ async def get_cigar(
 
     prices = [
         {
-            "source_id":    p.source_id,
-            "source_name":  p.source.name,
-            "source_slug":  p.source.slug,
-            "base_url":     p.source.base_url,
-            "product_url":  p.product_url,
-            "currency":     currency,
-            "price_single": convert(p.price_single, p.currency),
-            "price_box":    convert(p.price_box, p.currency),
-            "box_count":    p.box_count,
-            "in_stock":     p.in_stock,
-            "scraped_at":   p.scraped_at.isoformat(),
+            "source_id":       p.source_id,
+            "source_name":     p.source.name,
+            "source_slug":     p.source.slug,
+            "base_url":        p.source.base_url,
+            "product_url":     p.product_url,
+            "currency":        currency,
+            "source_currency": p.currency,          # 原始货币
+            "price_single":    convert(p.price_single, p.currency),
+            "price_box":       convert(p.price_box, p.currency),
+            "price_single_src": p.price_single,     # 原始货币金额
+            "price_box_src":    p.price_box,
+            "box_count":       p.box_count,
+            "in_stock":        p.in_stock,
+            "scraped_at":      p.scraped_at.isoformat(),
         }
         for p in cigar.prices
         if p.source.active

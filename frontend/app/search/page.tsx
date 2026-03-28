@@ -21,66 +21,90 @@ export default async function SearchPage({
   }
 
   return (
-    <div className="space-y-6">
+    <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+
       {/* Search Box */}
-      <form action="/search" className="flex gap-2 max-w-lg">
+      <form action="/search" style={{ display: "flex", gap: 10, maxWidth: 560 }}>
         <input
           name="q"
           type="text"
           defaultValue={q}
           placeholder="搜索雪茄名称…"
           autoFocus
-          className="flex-1 rounded-lg border border-zinc-300 px-4 py-2 text-sm outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
+          style={{
+            flex: 1,
+            borderRadius: 12,
+            border: "1px solid var(--apple-border)",
+            backgroundColor: "var(--apple-surface)",
+            padding: "12px 18px",
+            fontSize: 15,
+            color: "var(--apple-label)",
+            outline: "none",
+            boxShadow: "0 1px 6px rgba(0,0,0,0.04)",
+          }}
         />
-        <button
-          type="submit"
-          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white hover:bg-zinc-700 transition-colors"
-        >
+        <button type="submit" className="apple-btn" style={{
+          borderRadius: 12,
+          backgroundColor: "var(--apple-blue)",
+          color: "#fff",
+          border: "none",
+          padding: "12px 24px",
+          fontSize: 15,
+          fontWeight: 500,
+          whiteSpace: "nowrap",
+        }}>
           搜索
         </button>
       </form>
 
       {/* Results */}
-      {q.trim() && (
-        <div>
-          {error ? (
-            <p className="text-sm text-red-500">搜索失败，请稍后重试</p>
-          ) : results.length === 0 ? (
-            <p className="text-sm text-zinc-400">未找到 "{q}" 相关结果</p>
-          ) : (
-            <>
-              <p className="text-xs text-zinc-400 mb-3">找到 {results.length} 条结果</p>
-              <div className="grid gap-2">
-                {results.map((c) => (
-                  <Link
-                    key={c.slug}
-                    href={`/cigar/${c.slug}`}
-                    className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white px-4 py-3 hover:border-zinc-400 hover:shadow-sm transition-all"
-                  >
-                    <div>
-                      <div className="font-medium text-sm">{c.name}</div>
-                      <div className="text-xs text-zinc-400 mt-0.5">
-                        {c.brand} · {c.series}
-                        {c.vitola && ` · ${c.vitola}`}
+      {q.trim() ? (
+        error ? (
+          <p style={{ fontSize: 15, color: "#ff3b30" }}>搜索失败，请稍后重试</p>
+        ) : results.length === 0 ? (
+          <p style={{ fontSize: 15, color: "var(--apple-tertiary)" }}>未找到 "{q}" 相关结果</p>
+        ) : (
+          <div>
+            <p style={{ fontSize: 12, color: "var(--apple-tertiary)", margin: "0 0 14px 4px" }}>
+              找到 {results.length} 条结果
+            </p>
+            <div style={{
+              borderRadius: 16,
+              border: "1px solid var(--apple-border)",
+              backgroundColor: "var(--apple-surface)",
+              overflow: "hidden",
+              boxShadow: "0 1px 6px rgba(0,0,0,0.04)",
+            }}>
+              {results.map((c, i) => (
+                <Link
+                  key={c.slug}
+                  href={`/cigar/${c.slug}`}
+                  className="apple-row-link"
+                  style={{
+                    padding: "14px 20px",
+                    borderTop: i === 0 ? "none" : "1px solid var(--apple-separator)",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: 15, color: "var(--apple-label)" }}>{c.name}</div>
+                    <div style={{ fontSize: 12, color: "var(--apple-tertiary)", marginTop: 3 }}>
+                      {c.brand} · {c.series}{c.vitola ? ` · ${c.vitola}` : ""}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 16 }}>
+                    {c.min_price_single != null && (
+                      <div style={{ fontSize: 14, fontWeight: 500, color: "var(--apple-label)" }}>
+                        {c.currency} {c.min_price_single.toFixed(2)}
                       </div>
-                    </div>
-                    <div className="text-right text-sm">
-                      {c.min_price_single != null && (
-                        <div className="font-medium text-zinc-700">
-                          {c.currency} {c.min_price_single.toFixed(2)}
-                        </div>
-                      )}
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {!q.trim() && (
-        <p className="text-sm text-zinc-400">
+                    )}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )
+      ) : (
+        <p style={{ fontSize: 15, color: "var(--apple-tertiary)" }}>
           输入雪茄名称搜索，如 "Cohiba Robusto"、"Montecristo No.2"…
         </p>
       )}

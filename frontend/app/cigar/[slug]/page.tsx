@@ -1,140 +1,37 @@
-"use client";
-
-import { useEffect, useState, useCallback } from "react";
-import { useParams } from "next/navigation";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { api, CigarDetail, Currency, PriceRow } from "@/lib/api";
+import CurrencySwitcher from "./CurrencySwitcher";
 
-const CURRENCIES: Currency[] = ["USD", "CNY", "HKD", "EUR"];
+export const revalidate = 300;
 
 const CURRENCY_SYMBOLS: Record<Currency, string> = {
   USD: "$", CNY: "¥", HKD: "HK$", EUR: "€",
 };
 
-function PriceCell({ value, currency }: { value: number | null; currency: Currency }) {
-  if (value == null) return <span className="text-zinc-300">—</span>;
-  return (
-    <span>
-      {CURRENCY_SYMBOLS[currency]}{value.toFixed(2)}
-    </span>
-  );
+function fmt(value: number | null, currency: Currency) {
+  if (value == null) return "—";
+  return `${CURRENCY_SYMBOLS[currency]}${value.toFixed(2)}`;
 }
 
 function StockBadge({ inStock }: { inStock: boolean }) {
-  return inStock ? (
-    <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-200">
-      有货
-    </span>
-  ) : (
-    <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-400">
-      缺货
-    </span>
-  );
-}
-
-export default function CigarPage() {
-  const { slug } = useParams<{ slug: string }>();
-  const [currency, setCurrency] = useState<Currency>("USD");
-  const [data, setData] = useState<CigarDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(false);
-    try {
-      const d = await api.cigar(slug, currency);
-      setData(d);
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [slug, currency]);
-
-  useEffect(() => { load(); }, [load]);
-
-  if (loading) {
-    return (
-      <div className="py-20 text-center text-sm text-zinc-400">加载中…</div>
-    );
-  }
-
-  if (error || !data) {
-    return (
-      <div className="py-20 text-center">
-        <p className="text-zinc-500">未找到该雪茄</p>
-        <Link href="/" className="mt-4 inline-block text-sm text-zinc-700 underline">返回首页</Link>
-      </div>
-    );
-  }
-
-  // Separate in-stock from out-of-stock rows
-  const inStockRows  = data.prices.filter((p) => p.in_stock);
-  const outStockRows = data.prices.filter((p) => !p.in_stock);
-
   return (
-    <div className="space-y-6">
-      {/* Breadcrumb */}
-      <nav className="text-xs text-zinc-400 flex gap-1.5 items-center flex-wrap">
-        <Link href="/" className="hover:text-zinc-600">品牌</Link>
-        <span>/</span>
-        <Link href={`/brand/${data.brand.slug}`} className="hover:text-zinc-600">
-          {data.brand.name}
-        </Link>
-        <span>/</span>
-        <span className="text-zinc-700">{data.name}</span>
-      </nav>
-
-      {/* Cigar Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold leading-tight">{data.name}</h1>
-          <div className="mt-1 flex flex-wrap gap-2 text-xs text-zinc-500">
-            {data.vitola    && <span>{data.vitola}</span>}
-            {data.length_mm && <span>{data.length_mm}mm</span>}
-            {data.ring_gauge && <span>环径 {data.ring_gauge}</span>}
-          </div>
-        </div>
-
-        {/* Currency Switcher */}
-        <div className="flex gap-1">
-          {CURRENCIES.map((c) => (
-            <button
-              key={c}
-              onClick={() => setCurrency(c)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                currency === c
-                  ? "bg-zinc-900 text-white"
-                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
-              }`}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Price Table */}
-      {data.prices.length === 0 ? (
-        <div className="rounded-xl border border-zinc-200 bg-white px-6 py-12 text-center text-sm text-zinc-400">
-          暂无报价数据
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <PriceTable rows={inStockRows}  currency={currency} title="有货商家" />
-          {outStockRows.length > 0 && (
-            <PriceTable rows={outStockRows} currency={currency} title="缺货商家" dimmed />
-          )}
-        </div>
-      )}
-    </div>
+    <span style={{
+      display: "inline-flex",
+      alignItems: "center",
+      borderRadius: 20,
+      padding: "3px 10px",
+      fontSize: 11,
+      fontWeight: 600,
+      backgroundColor: inStock ? "rgba(52,199,89,0.12)" : "var(--apple-fill)",
+      color: inStock ? "#1a7f3c" : "var(--apple-tertiary)",
+    }}>
+      {inStock ? "有货" : "缺货"}
+    </span>
   );
 }
 
-function PriceTable({
-  rows, currency, title, dimmed = false,
-}: {
+function PriceTable({ rows, currency, title, dimmed = false }: {
   rows: PriceRow[];
   currency: Currency;
   title: string;
@@ -144,62 +41,196 @@ function PriceTable({
 
   return (
     <div>
-      <h2 className={`text-xs font-semibold uppercase tracking-wider mb-2 ${dimmed ? "text-zinc-300" : "text-zinc-500"}`}>
+      <p style={{
+        fontSize: 12,
+        fontWeight: 600,
+        color: dimmed ? "var(--apple-tertiary)" : "var(--apple-secondary)",
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        margin: "0 0 12px 4px",
+      }}>
         {title} ({rows.length})
-      </h2>
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-zinc-100 text-xs text-zinc-400">
-              <th className="px-4 py-2.5 text-left font-medium">网站</th>
-              <th className="px-4 py-2.5 text-right font-medium">单支价</th>
-              <th className="px-4 py-2.5 text-right font-medium">盒装价</th>
-              <th className="px-4 py-2.5 text-right font-medium">支数</th>
-              <th className="px-4 py-2.5 text-center font-medium">库存</th>
-            </tr>
-          </thead>
-          <tbody className={dimmed ? "opacity-40" : ""}>
-            {rows.map((p, i) => (
-              <tr
-                key={p.source_slug}
-                className={`border-b border-zinc-50 last:border-0 hover:bg-zinc-50 transition-colors ${
-                  i === 0 && !dimmed ? "bg-green-50/50" : ""
-                }`}
-              >
-                <td className="px-4 py-3">
-                  {p.product_url ? (
-                    <a
-                      href={p.product_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-medium hover:underline text-zinc-800"
-                    >
-                      {p.source_name}
-                    </a>
-                  ) : (
-                    <span className="font-medium text-zinc-800">{p.source_name}</span>
-                  )}
-                  <div className="text-[10px] text-zinc-400 mt-0.5">
-                    {new Date(p.scraped_at).toLocaleDateString("zh-CN")}
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-right font-medium">
-                  <PriceCell value={p.price_single} currency={currency} />
-                </td>
-                <td className="px-4 py-3 text-right font-medium">
-                  <PriceCell value={p.price_box} currency={currency} />
-                </td>
-                <td className="px-4 py-3 text-right text-zinc-500">
-                  {p.box_count ?? "—"}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <StockBadge inStock={p.in_stock} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      </p>
+      <div style={{
+        borderRadius: 16,
+        border: "1px solid var(--apple-border)",
+        backgroundColor: "var(--apple-surface)",
+        overflow: "hidden",
+        boxShadow: "0 1px 6px rgba(0,0,0,0.04)",
+        opacity: dimmed ? 0.45 : 1,
+      }}>
+        {/* Header */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 100px 100px 110px 56px 72px",
+          padding: "10px 20px",
+          borderBottom: "1px solid var(--apple-separator)",
+          fontSize: 11,
+          fontWeight: 600,
+          color: "var(--apple-tertiary)",
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+        }}>
+          <span>网站</span>
+          <span style={{ textAlign: "right" }}>单支价</span>
+          <span style={{ textAlign: "right" }}>盒装价</span>
+          <span style={{ textAlign: "right" }}>原价</span>
+          <span style={{ textAlign: "right" }}>支数</span>
+          <span style={{ textAlign: "center" }}>库存</span>
+        </div>
+
+        {/* Rows */}
+        {rows.map((p, i) => (
+          <div
+            key={p.source_slug}
+            className={`apple-price-row${i === 0 && !dimmed ? " best" : ""}`}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 100px 100px 110px 56px 72px",
+              padding: "13px 20px",
+              alignItems: "center",
+              borderTop: i === 0 ? "none" : "1px solid var(--apple-separator)",
+              backgroundColor: i === 0 && !dimmed ? "rgba(52,199,89,0.04)" : "transparent",
+            }}
+          >
+            <div>
+              {p.product_url ? (
+                <a href={p.product_url} target="_blank" rel="noopener noreferrer" className="apple-source-link" style={{ fontWeight: 500, fontSize: 14 }}>
+                  {p.source_name}
+                </a>
+              ) : (
+                <span style={{ fontWeight: 500, fontSize: 14, color: "var(--apple-label)" }}>{p.source_name}</span>
+              )}
+              <div style={{ fontSize: 11, color: "var(--apple-tertiary)", marginTop: 2 }}>
+                {new Date(p.scraped_at).toLocaleDateString("zh-CN")}
+              </div>
+            </div>
+
+            <div style={{ textAlign: "right", fontSize: 14, fontWeight: 500, color: p.price_single != null ? "var(--apple-label)" : "var(--apple-tertiary)" }}>
+              {fmt(p.price_single, currency)}
+            </div>
+
+            <div style={{ textAlign: "right", fontSize: 14, fontWeight: 500, color: p.price_box != null ? "var(--apple-label)" : "var(--apple-tertiary)" }}>
+              {fmt(p.price_box, currency)}
+            </div>
+
+            <div style={{ textAlign: "right", fontSize: 12, color: "var(--apple-tertiary)" }}>
+              {p.price_single_src != null
+                ? `${p.source_currency} ${p.price_single_src.toFixed(2)}`
+                : p.price_box_src != null
+                ? `${p.source_currency} ${p.price_box_src.toFixed(2)}`
+                : "—"}
+            </div>
+
+            <div style={{ textAlign: "right", fontSize: 13, color: "var(--apple-secondary)" }}>
+              {p.box_count ?? "—"}
+            </div>
+
+            <div style={{ textAlign: "center" }}>
+              <StockBadge inStock={p.in_stock} />
+            </div>
+          </div>
+        ))}
       </div>
+    </div>
+  );
+}
+
+const VALID_CURRENCIES: Currency[] = ["USD", "CNY", "HKD", "EUR"];
+
+export default async function CigarPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ currency?: string }>;
+}) {
+  const { slug } = await params;
+  const { currency: rawCurrency } = await searchParams;
+  const currency: Currency = VALID_CURRENCIES.includes(rawCurrency as Currency)
+    ? (rawCurrency as Currency)
+    : "USD";
+
+  let data: CigarDetail;
+  try {
+    data = await api.cigar(slug, currency);
+  } catch {
+    notFound();
+  }
+
+  const inStockRows  = data.prices.filter((p) => p.in_stock);
+  const outStockRows = data.prices.filter((p) => !p.in_stock);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+
+      {/* Breadcrumb */}
+      <nav style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", fontSize: 13, color: "var(--apple-tertiary)" }}>
+        <Link href="/" style={{ color: "var(--apple-blue)", textDecoration: "none" }}>品牌</Link>
+        <span>/</span>
+        <Link href={`/brand/${data.brand.slug}`} style={{ color: "var(--apple-blue)", textDecoration: "none" }}>
+          {data.brand.name}
+        </Link>
+        <span>/</span>
+        <span style={{ color: "var(--apple-label)" }}>{data.name}</span>
+      </nav>
+
+      {/* Cigar Header */}
+      <div style={{
+        borderRadius: 20,
+        backgroundColor: "var(--apple-surface)",
+        border: "1px solid var(--apple-border)",
+        padding: "32px 40px",
+        boxShadow: "0 2px 20px rgba(0,0,0,0.05)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 24,
+        flexWrap: "wrap",
+      }}>
+        <div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.025em", margin: 0 }}>{data.name}</h1>
+          <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {[data.vitola, data.length_mm ? `${data.length_mm} mm` : null, data.ring_gauge ? `环径 ${data.ring_gauge}` : null]
+              .filter(Boolean)
+              .map((tag) => (
+                <span key={tag} style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: "var(--apple-secondary)",
+                  backgroundColor: "var(--apple-fill)",
+                  borderRadius: 8,
+                  padding: "4px 10px",
+                }}>
+                  {tag}
+                </span>
+              ))}
+          </div>
+        </div>
+        <CurrencySwitcher current={currency} slug={slug} />
+      </div>
+
+      {/* Price Tables */}
+      {data.prices.length === 0 ? (
+        <div style={{
+          borderRadius: 16,
+          border: "1px solid var(--apple-border)",
+          backgroundColor: "var(--apple-surface)",
+          padding: "60px 24px",
+          textAlign: "center",
+          fontSize: 15,
+          color: "var(--apple-tertiary)",
+        }}>
+          暂无报价数据
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          <PriceTable rows={inStockRows}  currency={currency} title="有货商家" />
+          {outStockRows.length > 0 && (
+            <PriceTable rows={outStockRows} currency={currency} title="缺货商家" dimmed />
+          )}
+        </div>
+      )}
     </div>
   );
 }

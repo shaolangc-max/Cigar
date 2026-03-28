@@ -45,13 +45,14 @@ def _parse_products(products: list[dict], source_slug: str) -> list[ScrapedItem]
             count_m = re.search(r"(\d+)er", vt_lower)
             count   = int(count_m.group(1)) if count_m else 1
 
+            if v.get("available"):
+                in_stock = True
+
             is_single = "einzeln" in vt_lower or count == 1
 
             if is_single:
                 if price_single is None:
                     price_single = price
-                    if v.get("available"):
-                        in_stock = True
             elif count > 1:
                 # 选最大的标准盒（Kiste优先于Schachtel）
                 is_kiste = "kiste" in vt_lower

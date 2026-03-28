@@ -312,7 +312,6 @@ CATALOG: dict[str, list] = {
             ("Fonseca No.1",            "Laguito No.1",  155, 40),
         ]),
     ],
-    "h-upmann": [],
     "saint-luis-rey": [
         ("Saint Luis Rey Clasicos", [
             ("Saint Luis Rey Churchill",  "Churchill",    178, 47),

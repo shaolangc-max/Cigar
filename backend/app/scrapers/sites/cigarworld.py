@@ -2,7 +2,7 @@
 德国雪茄世界 — cigarworld.de
 静态 HTML，EUR 计价。
 目录结构: /zigarren/kuba/{category}
-商品页: /zigarren/kuba/{category}/{name}_{id}
+注：详情页为 SPA，无法解析盒装价格，仅采集列表页单支价格。
 """
 from __future__ import annotations
 import re
@@ -59,39 +59,17 @@ def _parse_listing(html: str) -> list[tuple[str, str, float, bool]]:
     return results
 
 
-def _parse_product(html: str) -> list[tuple[float, str, bool]]:
-    """从商品详情页提取 [(price, unit_label, in_stock), ...]
-    unit_label 形如 '1er', '10er Kiste', '25er Kiste'
-    """
-    rows = re.findall(
-        r'<div class="ws-g DetailOrderbox-row">(.*?)</div>\s*</div>',
-        html, re.DOTALL,
-    )
-    results = []
-    for row in rows:
-        price = re.search(r'data-eurval="([^"]+)"', row)
-        unit  = re.search(r'class="einheitlabel[^"]*"[^>]*>([^<]+)', row)
-        avail = re.search(r'title="(Auf Lager|Momentan nicht|Ausverkauft)"', row)
-        if price and unit:
-            p    = float(price.group(1))
-            u    = unit.group(1).strip()
-            ok   = avail and "Lager" in avail.group(1)
-            results.append((p, u, bool(ok)))
-    return results
-
-
 @register
 class CigarWorldScraper(BaseScraper):
     source_slug = "cigarworld"
 
     async def scrape(self) -> list[ScrapedItem]:
         async with httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True) as client:
-            # 1. 汇总各目录页所有商品
-            listing_items: dict[str, dict] = {}  # url -> {name, price_single, in_stock}
-            sem_list = asyncio.Semaphore(3)
+            listing_items: dict[str, dict] = {}
+            sem = asyncio.Semaphore(3)
 
             async def _fetch_cat(cat_path: str):
-                async with sem_list:
+                async with sem:
                     try:
                         r = await client.get(BASE + cat_path)
                         for url, name, price, ok in _parse_listing(r.text):
@@ -106,44 +84,16 @@ class CigarWorldScraper(BaseScraper):
 
             await asyncio.gather(*[_fetch_cat(c) for c in CUBAN_CATEGORIES])
 
-            # 2. 访问商品详情页获取盒装价格
-            sem_prod = asyncio.Semaphore(4)
-
-            async def _fetch_product(url: str) -> ScrapedItem | None:
-                async with sem_prod:
-                    info = listing_items[url]
-                    price_single = info["price_single"]
-                    price_box    = None
-                    box_count    = None
-
-                    try:
-                        r = await client.get(url)
-                        rows = _parse_product(r.text)
-                        for price, unit, ok in rows:
-                            count_m = re.search(r"(\d+)er", unit)
-                            count   = int(count_m.group(1)) if count_m else 1
-                            if count <= 1:
-                                price_single = price
-                                info["in_stock"] = ok
-                            else:
-                                # 取数量最大的盒装（通常是标准盒）
-                                if price_box is None or count > (box_count or 0):
-                                    price_box = price
-                                    box_count = count
-                    except Exception:
-                        pass
-
-                    return ScrapedItem(
-                        source_slug  = self.source_slug,
-                        raw_name     = info["name"],
-                        product_url  = url,
-                        price_single = price_single,
-                        price_box    = price_box,
-                        box_count    = box_count,
-                        currency     = "EUR",
-                        in_stock     = info["in_stock"],
-                    )
-
-            tasks = [_fetch_product(u) for u in listing_items]
-            results = await asyncio.gather(*tasks)
-            return [r for r in results if r is not None]
+            return [
+                ScrapedItem(
+                    source_slug  = self.source_slug,
+                    raw_name     = info["name"],
+                    product_url  = url,
+                    price_single = info["price_single"],
+                    price_box    = None,
+                    box_count    = None,
+                    currency     = "EUR",
+                    in_stock     = info["in_stock"],
+                )
+                for url, info in listing_items.items()
+            ]

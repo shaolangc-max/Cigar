@@ -58,7 +58,7 @@ async def get_brand(
     rates = {r.currency: r.rate_to_usd for r in rates_result.scalars().all()}
 
     def convert(amount: float | None, from_ccy: str) -> float | None:
-        if amount is None or not rates:
+        if amount is None:
             return None
         in_usd = amount / rates.get(from_ccy, 1.0)
         return round(in_usd * rates.get(currency, 1.0), 2)
