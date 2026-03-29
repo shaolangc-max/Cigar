@@ -51,9 +51,8 @@ class UserAdmin(ModelView, model=User):
         User.subscription_status, User.subscription_expires_at,
         User.registered_at, User.last_login_at,
     ]
-    column_searchable_list = [User.email, User.nickname]
+    column_searchable_list = [User.email, User.nickname, User.subscription_status]
     column_sortable_list = [User.id, User.registered_at, User.subscription_status]
-    column_filters = [User.subscription_status]
 
     # 可编辑字段（手动开通 PRO 等）
     form_include_pk = False
@@ -79,7 +78,7 @@ class UserAlertAdmin(ModelView, model=UserPriceAlert):
         UserPriceAlert.last_triggered_at,
     ]
     column_sortable_list = [UserPriceAlert.created_at, UserPriceAlert.last_triggered_at]
-    column_filters = [UserPriceAlert.alert_type, UserPriceAlert.is_active]
+    column_searchable_list = [UserPriceAlert.alert_type]
 
     can_create = False
     can_delete = True
@@ -100,8 +99,7 @@ class ScraperRunAdmin(ModelView, model=ScraperRun):
         ScraperRun.error_msg,
     ]
     column_sortable_list = [ScraperRun.started_at, ScraperRun.source_slug, ScraperRun.status]
-    column_searchable_list = [ScraperRun.source_slug]
-    column_filters = [ScraperRun.status, ScraperRun.source_slug]
+    column_searchable_list = [ScraperRun.source_slug, ScraperRun.status]
 
     can_create = False
     can_edit = False
@@ -121,7 +119,6 @@ class UnmatchedItemAdmin(ModelView, model=UnmatchedItem):
     ]
     column_searchable_list = [UnmatchedItem.raw_name, UnmatchedItem.source_slug]
     column_sortable_list = [UnmatchedItem.id, UnmatchedItem.source_slug]
-    column_filters = [UnmatchedItem.source_slug]
 
     can_create = False
     can_edit = False
@@ -159,7 +156,6 @@ class SourceAdmin(ModelView, model=Source):
     ]
     column_searchable_list = [Source.name, Source.slug]
     column_sortable_list = [Source.id, Source.name, Source.active]
-    column_filters = [Source.active]
 
     form_columns = [Source.name, Source.base_url, Source.currency, Source.active]
 
@@ -178,7 +174,7 @@ class PriceAdmin(ModelView, model=Price):
         Price.in_stock, Price.scraped_at,
     ]
     column_sortable_list = [Price.scraped_at, Price.cigar_id, Price.source_id]
-    column_filters = [Price.in_stock, Price.currency]
+    column_searchable_list = [Price.currency]
 
     can_create = False
     can_edit = False
