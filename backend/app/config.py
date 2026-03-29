@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     stripe_price_yearly: str = ""    # Stripe 后台的年付 Price ID
     frontend_url: str = "http://localhost:3001"
 
+    # Admin 后台
+    admin_username: str = "admin"
+    admin_password: str = "cigar2026"
+
     class Config:
         env_file = ".env"
 

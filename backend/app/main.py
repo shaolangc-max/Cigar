@@ -4,9 +4,12 @@ from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import func, select
 
 from app.api import brands, cigars, prices, admin, auth, billing, alerts, scraper_admin
+from app.admin import create_admin
+from app.config import settings
 from app.db import AsyncSessionLocal
 from app.models import Price
 from app.scheduler.tasks import run_all_scrapers, update_exchange_rates
@@ -53,12 +56,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Cigar Price API", version="1.0.0", lifespan=lifespan)
 
+app.add_middleware(SessionMiddleware, secret_key=settings.jwt_secret_key)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+create_admin(app)
 
 app.include_router(auth.router,    prefix="/api/v1")
 app.include_router(billing.router, prefix="/api/v1")
