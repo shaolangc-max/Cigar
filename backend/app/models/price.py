@@ -1,7 +1,6 @@
 from datetime import datetime
-from sqlalchemy import Float, Integer, ForeignKey, DateTime, String, UniqueConstraint
+from sqlalchemy import Float, Integer, ForeignKey, DateTime, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
 from .base import Base
 
 
@@ -22,7 +21,7 @@ class Price(Base):
     product_url:  Mapped[str | None]   = mapped_column(String(500))
     in_stock:     Mapped[bool]         = mapped_column(default=True)
     scraped_at:   Mapped[datetime]     = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
     )
 
     cigar:  Mapped["Cigar"]  = relationship(back_populates="prices")

@@ -1,7 +1,6 @@
 from datetime import datetime
-from sqlalchemy import Float, String, DateTime
+from sqlalchemy import Float, String, DateTime, text
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.sql import func
 from .base import Base
 
 
@@ -12,5 +11,5 @@ class ExchangeRate(Base):
     currency:   Mapped[str]      = mapped_column(String(10), primary_key=True)
     rate_to_usd: Mapped[float]   = mapped_column(Float)   # 1 USD = rate 该货币
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
     )

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { api, CigarDetail, Currency, PriceRow } from "@/lib/api";
 import CurrencySwitcher from "./CurrencySwitcher";
 import PriceHistoryChart from "./PriceHistoryChart";
+import AlertButtons from "./AlertButtons";
 
 export const revalidate = 300;
 
@@ -212,7 +213,10 @@ export default async function CigarPage({
               ))}
           </div>
         </div>
-        <CurrencySwitcher current={currency} slug={slug} />
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 12 }}>
+          <CurrencySwitcher current={currency} slug={slug} />
+          <AlertButtons cigarId={data.id} currency={currency} />
+        </div>
       </div>
 
       {/* Price Tables */}

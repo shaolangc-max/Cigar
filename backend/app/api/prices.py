@@ -1,11 +1,18 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.models import PriceHistory, ExchangeRate
+from app.models import Price, PriceHistory, ExchangeRate
 
 router = APIRouter(prefix="/prices", tags=["prices"])
+
+
+@router.get("/last-updated")
+async def last_updated(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(func.max(Price.scraped_at)))
+    ts = result.scalar_one_or_none()
+    return {"last_updated": ts.isoformat() if ts else None}
 
 
 @router.get("/history/{cigar_id}")

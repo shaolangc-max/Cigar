@@ -263,6 +263,15 @@ CATALOG: dict[str, list] = {
             ("El Rey del Mundo Tainos",        "Taino",       177,54),
         ]),
     ],
+    "quai-d-orsay": [
+        ("Quai d'Orsay Clasicos", [
+            ("Quai d'Orsay No. 50",     "Robusto",       124, 50),
+            ("Quai d'Orsay No. 54",     "Piramides",     155, 54),
+            ("Quai d'Orsay Imperiales", "Churchill",     178, 47),
+            ("Quai d'Orsay Panetelas",  "Panetela",      115, 34),
+            ("Quai d'Orsay Gran Corona","Gran Corona",   155, 52),
+        ]),
+    ],
     "por-larranaga": [
         ("Por Larranaga Clasicos", [
             ("Por Larranaga Montecarlos", "Lonsdale", 165, 42),

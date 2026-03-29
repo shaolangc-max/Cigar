@@ -7,9 +7,13 @@ from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import select, update
-from sqlalchemy.dialects.postgresql import insert
 
 from app.config import settings
+
+if settings.database_url.startswith("postgresql"):
+    from sqlalchemy.dialects.postgresql import insert
+else:
+    from sqlalchemy.dialects.sqlite import insert
 from app.db import AsyncSessionLocal
 from app.models import Cigar, Source, Price, PriceHistory, ExchangeRate
 from app.scrapers.registry import get_all
@@ -36,10 +40,10 @@ async def update_exchange_rates():
 
     async with AsyncSessionLocal() as db:
         for currency, rate in rates.items():
-            stmt = insert(ExchangeRate).values(currency=currency, rate_to_usd=rate)
+            stmt = insert(ExchangeRate).values(currency=currency, rate_to_usd=rate, updated_at=datetime.now(timezone.utc))
             stmt = stmt.on_conflict_do_update(
                 index_elements=["currency"],
-                set_={"rate_to_usd": rate},
+                set_={"rate_to_usd": rate, "updated_at": datetime.now(timezone.utc)},
             )
             await db.execute(stmt)
         await db.commit()
@@ -101,7 +105,7 @@ async def _save_items(items):
                 scraped_at=now,
             )
             stmt = stmt.on_conflict_do_update(
-                constraint="uq_price_cigar_source",
+                index_elements=["cigar_id", "source_id"],
                 set_={
                     "price_single": item.price_single,
                     "price_box": item.price_box,

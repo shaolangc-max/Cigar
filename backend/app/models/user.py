@@ -74,17 +74,18 @@ class UserFavorite(Base):
 
 
 class UserPriceAlert(Base):
-    """价格提醒：低于目标价时通知用户"""
+    """价格提醒：price=低于目标价通知，stock=到货通知"""
     __tablename__ = "user_price_alerts"
 
     id:               Mapped[int]           = mapped_column(primary_key=True)
     user_id:          Mapped[int]           = mapped_column(ForeignKey("users.id"), index=True)
     cigar_id:         Mapped[int]           = mapped_column(ForeignKey("cigars.id"), index=True)
-    target_price:     Mapped[float]         = mapped_column(Float)
+    alert_type:       Mapped[str]           = mapped_column(String(10), default="price")  # price | stock
+    target_price:     Mapped[float | None]  = mapped_column(Float)        # stock 提醒时为 None
     currency:         Mapped[str]           = mapped_column(String(10), default="USD")
-    source_id:        Mapped[int | None]    = mapped_column(ForeignKey("sources.id"))  # None = 任意渠道
+    source_id:        Mapped[int | None]    = mapped_column(ForeignKey("sources.id"))
     is_active:        Mapped[bool]          = mapped_column(Boolean, default=True)
-    last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 防重复通知
+    last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at:       Mapped[datetime]      = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user:   Mapped["User"]         = relationship(back_populates="price_alerts")

@@ -7,7 +7,30 @@ export const metadata: Metadata = {
   description: "实时对比全球60+专卖店古巴雪茄价格",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+async function getLastUpdated(): Promise<string | null> {
+  try {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api/v1";
+    const res = await fetch(`${apiBase}/prices/last-updated`, {
+      next: { revalidate: 14400 },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.last_updated ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const lastUpdatedIso = await getLastUpdated();
+  const lastUpdatedText = lastUpdatedIso
+    ? new Date(lastUpdatedIso).toLocaleString("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit",
+      })
+    : null;
+
   return (
     <html lang="zh-CN" className="h-full">
       <body style={{ minHeight: "100vh", backgroundColor: "var(--apple-bg)", color: "var(--apple-label)" }}>
@@ -50,6 +73,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           fontSize: 12,
         }}>
           价格每4小时自动更新 · 仅供参考，请以各网站实际价格为准
+          {lastUpdatedText && (
+            <span style={{ marginLeft: 12, opacity: 0.7 }}>
+              · 最后更新 {lastUpdatedText}
+            </span>
+          )}
         </footer>
       </body>
     </html>
