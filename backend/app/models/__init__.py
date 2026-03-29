@@ -7,10 +7,12 @@ from .price import Price, PriceHistory
 from .exchange_rate import ExchangeRate
 from .user import User, OAuthAccount, UserFavorite, UserPriceAlert, UserViewHistory
 from .search_quota import SearchQuota
+from .scraper_run import ScraperRun, UnmatchedItem
 
 __all__ = [
     "Base", "Brand", "Series", "Cigar",
     "Source", "Price", "PriceHistory", "ExchangeRate",
     "User", "OAuthAccount", "UserFavorite", "UserPriceAlert", "UserViewHistory",
     "SearchQuota",
+    "ScraperRun", "UnmatchedItem",
 ]

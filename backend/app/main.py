@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 
-from app.api import brands, cigars, prices, admin, auth, billing, alerts
+from app.api import brands, cigars, prices, admin, auth, billing, alerts, scraper_admin
 from app.db import AsyncSessionLocal
 from app.models import Price
 from app.scheduler.tasks import run_all_scrapers, update_exchange_rates
@@ -67,6 +67,7 @@ app.include_router(cigars.router, prefix="/api/v1")
 app.include_router(prices.router, prefix="/api/v1")
 app.include_router(admin.router,  prefix="/api/v1")
 app.include_router(alerts.router, prefix="/api/v1")
+app.include_router(scraper_admin.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")
