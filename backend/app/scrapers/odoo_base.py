@@ -54,7 +54,18 @@ _OOS_RE   = re.compile(
 # 有货：有 Add to Cart / Purchase 按钮文字
 _CART_RE  = re.compile(r'btn.?cart|Purchase|Warenkorb|panier|Add to Cart', re.I)
 
-_QTY_RE   = re.compile(r"(\d+)\s*(?:er|x)?\s*(?:kiste|schachtel|cigars?|stück|box|pack|pcs)", re.I)
+_QTY_RE      = re.compile(r"(\d+)\s*(?:er|x)?\s*(?:kiste|schachtel|cigars?|stück|box|pack|pcs)", re.I)
+_URL_QTY_RE  = re.compile(r"-(\d+)(?:\?|$)")
+_KNOWN_SIZES = {3, 5, 10, 12, 15, 20, 25, 40, 50}
+
+
+def _count_from_url(url: str) -> int | None:
+    m = _URL_QTY_RE.search(url)
+    if m:
+        n = int(m.group(1))
+        if n in _KNOWN_SIZES:
+            return n
+    return None
 
 
 def _parse_price(raw: str) -> float | None:
@@ -134,6 +145,10 @@ class OdooShopScraper(BaseScraper):
 
                     qty_m     = _QTY_RE.search(raw_name)
                     box_count = int(qty_m.group(1)) if qty_m else None
+
+                    # 名字未匹配到数量时，从 URL 回退提取
+                    if box_count is None:
+                        box_count = _count_from_url(product_url)
 
                     items.append(ScrapedItem(
                         source_slug  = self.source_slug,

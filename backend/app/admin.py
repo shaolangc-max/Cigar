@@ -3,19 +3,30 @@ SQLAdmin 后台管理界面
 访问地址：/admin
 账号密码在 .env 中配置（ADMIN_USERNAME / ADMIN_PASSWORD）
 """
+import re
+
+from markupsafe import Markup
 from sqladmin import Admin, ModelView
 from sqladmin.authentication import AuthenticationBackend
+from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
 from app.config import settings
-from app.db import engine
+from app.db import AsyncSessionLocal, engine
 from app.models.user import User, UserPriceAlert
 from app.models.price import Price
 from app.models.cigar import Cigar
+from app.models.brand import Brand
+from app.models.series import Series
 from app.models.source import Source
 from app.models.scraper_run import ScraperRun, UnmatchedItem
 from app.models.exchange_rate import ExchangeRate
+from app.models.alias import ScraperNameAlias
+
+
+def _slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
 # ── 认证 ──────────────────────────────────────────────────────────────────────
@@ -114,18 +125,113 @@ class UnmatchedItemAdmin(ModelView, model=UnmatchedItem):
     column_list = [
         UnmatchedItem.id, UnmatchedItem.source_slug,
         UnmatchedItem.raw_name,
+        UnmatchedItem.match_score, UnmatchedItem.best_candidate,
         UnmatchedItem.price_single, UnmatchedItem.price_box, UnmatchedItem.currency,
         UnmatchedItem.product_url, UnmatchedItem.run_id,
+        "trigger_btn",
     ]
+    column_labels = {"trigger_btn": "触发爬虫"}
     column_searchable_list = [UnmatchedItem.raw_name, UnmatchedItem.source_slug]
     column_sortable_list = [UnmatchedItem.id, UnmatchedItem.source_slug]
+
+    column_formatters = {
+        "product_url": lambda m, a: Markup(
+            f'<a href="{m.product_url}" target="_blank" rel="noopener">🔗 打开</a>'
+        ) if m.product_url else "",
+        "raw_name": lambda m, a: Markup(
+            f'{m.raw_name}&nbsp;&nbsp;'
+            f'<a href="/admin-tools/match/{m.id}" target="_blank" '
+            f'style="font-size:12px;padding:2px 8px;background:#3b82f6;color:#fff;'
+            f'border-radius:4px;text-decoration:none;">创建匹配</a>'
+        ),
+        "trigger_btn": lambda m, a: Markup(f"""
+<button class="btn btn-sm btn-outline-primary"
+        onclick="triggerOne('{m.source_slug}',this)">⚡ 触发</button>
+<script>(function(){{
+  if(window._unmatchedTriggerInit)return; window._unmatchedTriggerInit=true;
+  async function triggerOne(slug,btn){{
+    btn.disabled=true; btn.textContent='运行中…'; btn.className='btn btn-sm btn-warning';
+    try{{
+      const r=await fetch('/admin-tools/trigger/'+slug,{{method:'POST'}});
+      if(r.ok){{btn.textContent='✓ 已触发';btn.className='btn btn-sm btn-success';}}
+      else{{btn.textContent='✗ 失败';btn.className='btn btn-sm btn-danger';}}
+    }}catch(e){{btn.textContent='✗ 失败';btn.className='btn btn-sm btn-danger';}}
+  }}
+  window.triggerOne=triggerOne;
+}})();</script>"""),
+    }
 
     can_create = False
     can_edit = False
     can_delete = True
 
 
+class ScraperNameAliasAdmin(ModelView, model=ScraperNameAlias):
+    name = "名称别名"
+    name_plural = "爬虫名称别名"
+    icon = "fa-solid fa-link"
+
+    column_list = [
+        ScraperNameAlias.id, ScraperNameAlias.source_slug,
+        ScraperNameAlias.raw_name, ScraperNameAlias.cigar_id,
+        ScraperNameAlias.created_at,
+    ]
+    column_searchable_list = [ScraperNameAlias.source_slug, ScraperNameAlias.raw_name]
+    column_sortable_list = [ScraperNameAlias.id, ScraperNameAlias.source_slug, ScraperNameAlias.created_at]
+
+    form_columns = [ScraperNameAlias.source_slug, ScraperNameAlias.raw_name, ScraperNameAlias.cigar_id]
+
+    can_create = True
+    can_edit = True
+    can_delete = True
+
+
 # ── 数据维护 ──────────────────────────────────────────────────────────────────
+
+class BrandAdmin(ModelView, model=Brand):
+    name = "品牌"
+    name_plural = "品牌管理"
+    icon = "fa-solid fa-copyright"
+
+    column_list = [Brand.id, Brand.name, Brand.slug, Brand.country, Brand.image_url]
+    column_searchable_list = [Brand.name, Brand.slug]
+    column_sortable_list = [Brand.id, Brand.name]
+
+    form_columns = [Brand.name, Brand.slug, Brand.country, Brand.image_url]
+
+    can_create = True
+    can_edit = True
+    can_delete = False
+
+    async def after_model_change(self, data, model, is_created, request) -> None:
+        """品牌 slug 变更后，级联更新所有下属系列的 slug。"""
+        if is_created:
+            return
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Series).where(Series.brand_id == model.id)
+            )
+            series_list = result.scalars().all()
+            for s in series_list:
+                s.slug = _slugify(f"{model.slug}-{s.name}")
+            await db.commit()
+
+
+class SeriesAdmin(ModelView, model=Series):
+    name = "系列"
+    name_plural = "系列管理"
+    icon = "fa-solid fa-layer-group"
+
+    column_list = [Series.id, Series.brand_id, Series.name, Series.slug]
+    column_searchable_list = [Series.name, Series.slug]
+    column_sortable_list = [Series.id, Series.brand_id, Series.name]
+
+    form_columns = [Series.brand_id, Series.name, Series.slug]
+
+    can_create = True
+    can_edit = True
+    can_delete = False
+
 
 class CigarAdmin(ModelView, model=Cigar):
     name = "雪茄"
@@ -136,9 +242,16 @@ class CigarAdmin(ModelView, model=Cigar):
         Cigar.id, Cigar.name, Cigar.slug,
         Cigar.series_id, Cigar.vitola,
         Cigar.length_mm, Cigar.ring_gauge,
+        Cigar.edition_type, Cigar.edition, Cigar.parent_cigar_id,
     ]
-    column_searchable_list = [Cigar.name, Cigar.slug]
-    column_sortable_list = [Cigar.id, Cigar.name, Cigar.series_id]
+    column_searchable_list = [Cigar.name, Cigar.slug, Cigar.edition_type]
+    column_sortable_list = [Cigar.id, Cigar.name, Cigar.series_id, Cigar.edition_type]
+
+    form_columns = [
+        Cigar.series_id, Cigar.name, Cigar.slug,
+        Cigar.vitola, Cigar.length_mm, Cigar.ring_gauge,
+        Cigar.edition_type, Cigar.edition, Cigar.parent_cigar_id,
+    ]
 
     can_create = True
     can_edit = True
@@ -153,7 +266,9 @@ class SourceAdmin(ModelView, model=Source):
     column_list = [
         Source.id, Source.name, Source.slug,
         Source.base_url, Source.currency, Source.active,
+        "trigger_btn",
     ]
+    column_labels  = {"trigger_btn": "操作"}
     column_searchable_list = [Source.name, Source.slug]
     column_sortable_list = [Source.id, Source.name, Source.active]
 
@@ -161,6 +276,43 @@ class SourceAdmin(ModelView, model=Source):
 
     can_create = False
     can_delete = False
+
+    column_formatters = {
+        "trigger_btn": lambda m, a: Markup(f"""
+<button class="btn btn-sm btn-outline-primary"
+        onclick="triggerOne('{m.slug}',this)">⚡ 触发</button>
+<script>(function(){{
+  if(window._scraperInit)return; window._scraperInit=true;
+  async function triggerOne(slug,btn){{
+    btn.disabled=true; btn.textContent='运行中…'; btn.className='btn btn-sm btn-warning';
+    try{{
+      const r=await fetch('/admin-tools/trigger/'+slug,{{method:'POST'}});
+      if(r.ok){{btn.textContent='✓ 已触发';btn.className='btn btn-sm btn-success';}}
+      else{{btn.textContent='✗ 失败';btn.className='btn btn-sm btn-danger';}}
+    }}catch(e){{btn.textContent='✗ 失败';btn.className='btn btn-sm btn-danger';}}
+  }}
+  window.triggerOne=triggerOne;
+  async function triggerAll(btn){{
+    if(!confirm('确认触发全站爬取？通常需要数分钟，请勿重复点击。'))return;
+    btn.disabled=true; btn.textContent='⏳ 全站触发中…';
+    try{{
+      const r=await fetch('/admin-tools/trigger',{{method:'POST'}});
+      if(r.ok){{btn.textContent='✓ 全站已触发';btn.classList.replace('btn-warning','btn-success');}}
+      else{{btn.textContent='✗ 失败';btn.classList.replace('btn-warning','btn-danger');}}
+    }}catch(e){{btn.textContent='✗ 失败';}}
+  }}
+  document.addEventListener('DOMContentLoaded',function(){{
+    const anchor=document.querySelector('.page-pretitle')||document.querySelector('h2');
+    if(!anchor)return;
+    const wrap=anchor.closest('.col,.col-auto')||anchor.parentElement;
+    const btn=document.createElement('button');
+    btn.className='btn btn-warning ms-3';
+    btn.textContent='⚡ 触发全站爬取';
+    btn.onclick=function(){{triggerAll(this);}};
+    wrap.appendChild(btn);
+  }});
+}})();</script>"""),
+    }
 
 
 class PriceAdmin(ModelView, model=Price):
@@ -209,6 +361,9 @@ def create_admin(app) -> Admin:
     admin.add_view(UserAlertAdmin)
     admin.add_view(ScraperRunAdmin)
     admin.add_view(UnmatchedItemAdmin)
+    admin.add_view(ScraperNameAliasAdmin)
+    admin.add_view(BrandAdmin)
+    admin.add_view(SeriesAdmin)
     admin.add_view(CigarAdmin)
     admin.add_view(SourceAdmin)
     admin.add_view(PriceAdmin)

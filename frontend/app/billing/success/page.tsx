@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { getToken, apiMe, saveUser } from "@/lib/auth";
 
 export default function BillingSuccessPage() {
@@ -26,7 +27,7 @@ export default function BillingSuccessPage() {
         包括价格历史趋势图和降价提醒。
       </p>
       {done && (
-        <a
+        <Link
           href="/"
           style={{
             display: "inline-block",
@@ -40,7 +41,7 @@ export default function BillingSuccessPage() {
           }}
         >
           开始使用
-        </a>
+        </Link>
       )}
     </div>
   );

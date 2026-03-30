@@ -12,4 +12,5 @@ class Brand(Base):
     country:   Mapped[str | None] = mapped_column(String(50))
     image_url: Mapped[str | None] = mapped_column(String(500))
 
-    series: Mapped[list["Series"]] = relationship(back_populates="brand")
+    series:     Mapped[list["Series"]]    = relationship(back_populates="brand")
+    categories: Mapped[list["Category"]] = relationship(back_populates="brand", order_by="Category.sort_order")

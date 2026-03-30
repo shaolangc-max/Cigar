@@ -16,8 +16,9 @@ else:
     from sqlalchemy.dialects.sqlite import insert
 from app.db import AsyncSessionLocal
 from app.models import Cigar, Source, Price, PriceHistory, ExchangeRate, ScraperRun, UnmatchedItem
+from app.models.alias import ScraperNameAlias
 from app.scrapers.registry import get_all
-from app.scrapers.matcher import best_match
+from app.scrapers.matcher import best_match_with_aliases
 import app.scrapers.sites  # noqa: F401 — 触发所有爬虫注册
 
 log = logging.getLogger(__name__)
@@ -50,6 +51,72 @@ async def update_exchange_rates():
     log.info(f"Exchange rates updated: {rates}")
 
 
+async def _run_scraper(scraper) -> None:
+    """运行单个爬虫并记录结果，无并发限制（调用方自行控制并发）。"""
+    started_at = datetime.now(timezone.utc)
+    run_id: int | None = None
+    async with AsyncSessionLocal() as db:
+        run = ScraperRun(
+            source_slug=scraper.source_slug,
+            started_at=started_at,
+            status="running",
+        )
+        db.add(run)
+        await db.commit()
+        await db.refresh(run)
+        run_id = run.id
+
+    try:
+        items = await scraper.scrape()
+        scraped, matched, unmatched_items_data = await _save_items(items)
+        finished_at = datetime.now(timezone.utc)
+
+        async with AsyncSessionLocal() as db:
+            for u in unmatched_items_data:
+                db.add(UnmatchedItem(
+                    run_id=run_id,
+                    source_slug=scraper.source_slug,
+                    raw_name=u["raw_name"],
+                    price_single=u.get("price_single"),
+                    price_box=u.get("price_box"),
+                    currency=u["currency"],
+                    product_url=u.get("product_url"),
+                    match_score=u.get("match_score"),
+                    best_candidate=u.get("best_candidate"),
+                ))
+            run_obj = await db.get(ScraperRun, run_id)
+            if run_obj:
+                run_obj.status = "success"
+                run_obj.finished_at = finished_at
+                run_obj.items_scraped = scraped
+                run_obj.items_matched = matched
+                run_obj.items_unmatched = len(unmatched_items_data)
+            await db.commit()
+
+        log.info(f"  {scraper.source_slug}: {scraped} scraped, {matched} matched, {len(unmatched_items_data)} unmatched")
+    except Exception as e:
+        finished_at = datetime.now(timezone.utc)
+        async with AsyncSessionLocal() as db:
+            run_obj = await db.get(ScraperRun, run_id)
+            if run_obj:
+                run_obj.status = "failed"
+                run_obj.finished_at = finished_at
+                run_obj.error_msg = str(e)[:2000]
+            await db.commit()
+        log.error(f"  {scraper.source_slug} failed: {e}")
+
+
+async def run_single_scraper(source_slug: str) -> None:
+    """手动触发单个爬虫（供 API 调用）。"""
+    from app.scrapers.registry import get_by_slug
+    scraper = get_by_slug(source_slug)
+    if not scraper:
+        log.error(f"run_single_scraper: unknown slug {source_slug!r}")
+        return
+    log.info(f"Manual trigger: {source_slug}")
+    await _run_scraper(scraper)
+
+
 async def run_all_scrapers():
     scrapers = get_all()
     log.info(f"Starting scrape: {len(scrapers)} sources")
@@ -57,57 +124,7 @@ async def run_all_scrapers():
 
     async def _run_one(scraper):
         async with sem:
-            # 写入运行开始记录
-            started_at = datetime.now(timezone.utc)
-            run_id: int | None = None
-            async with AsyncSessionLocal() as db:
-                run = ScraperRun(
-                    source_slug=scraper.source_slug,
-                    started_at=started_at,
-                    status="running",
-                )
-                db.add(run)
-                await db.commit()
-                await db.refresh(run)
-                run_id = run.id
-
-            try:
-                items = await scraper.scrape()
-                scraped, matched, unmatched_items_data = await _save_items(items)
-                finished_at = datetime.now(timezone.utc)
-
-                # 写入 UnmatchedItem 并更新运行记录
-                async with AsyncSessionLocal() as db:
-                    for u in unmatched_items_data:
-                        db.add(UnmatchedItem(
-                            run_id=run_id,
-                            source_slug=scraper.source_slug,
-                            raw_name=u["raw_name"],
-                            price_single=u.get("price_single"),
-                            price_box=u.get("price_box"),
-                            currency=u["currency"],
-                            product_url=u.get("product_url"),
-                        ))
-                    run_obj = await db.get(ScraperRun, run_id)
-                    if run_obj:
-                        run_obj.status = "success"
-                        run_obj.finished_at = finished_at
-                        run_obj.items_scraped = scraped
-                        run_obj.items_matched = matched
-                        run_obj.items_unmatched = len(unmatched_items_data)
-                    await db.commit()
-
-                log.info(f"  {scraper.source_slug}: {scraped} scraped, {matched} matched, {len(unmatched_items_data)} unmatched")
-            except Exception as e:
-                finished_at = datetime.now(timezone.utc)
-                async with AsyncSessionLocal() as db:
-                    run_obj = await db.get(ScraperRun, run_id)
-                    if run_obj:
-                        run_obj.status = "failed"
-                        run_obj.finished_at = finished_at
-                        run_obj.error_msg = str(e)[:2000]
-                    await db.commit()
-                log.error(f"  {scraper.source_slug} failed: {e}")
+            await _run_scraper(scraper)
 
     await asyncio.gather(*[_run_one(s) for s in scrapers])
     log.info("Scrape complete")
@@ -125,19 +142,28 @@ async def _save_items(items) -> tuple[int, int, list[dict]]:
         if not source:
             return len(items), 0, []
 
-        # 加载该网站品牌的所有 cigar（减少查询次数）
+        # 加载全部 cigar
         cigar_result = await db.execute(select(Cigar))
         all_cigars = [
             {"id": c.id, "name": c.name, "slug": c.slug}
             for c in cigar_result.scalars().all()
         ]
 
+        # 加载别名表
+        alias_result = await db.execute(select(ScraperNameAlias))
+        aliases: dict[tuple[str, str], int] = {
+            (a.source_slug, a.raw_name): a.cigar_id
+            for a in alias_result.scalars().all()
+        }
+
         now = datetime.now(timezone.utc)
         matched_count = 0
         unmatched: list[dict] = []
 
         for item in items:
-            cigar = best_match(item.raw_name, all_cigars)
+            cigar, score, best_candidate = best_match_with_aliases(
+                item.raw_name, item.source_slug, aliases, all_cigars
+            )
             if not cigar:
                 unmatched.append({
                     "raw_name": item.raw_name,
@@ -145,6 +171,8 @@ async def _save_items(items) -> tuple[int, int, list[dict]]:
                     "price_box": item.price_box,
                     "currency": item.currency,
                     "product_url": item.product_url,
+                    "match_score": round(score, 3),
+                    "best_candidate": best_candidate,
                 })
                 continue
 

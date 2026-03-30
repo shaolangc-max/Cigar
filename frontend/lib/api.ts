@@ -50,6 +50,15 @@ export interface PriceRow {
   scraped_at: string;
 }
 
+export interface CigarVersion {
+  id: number;
+  name: string;
+  slug: string;
+  edition: string | null;
+  edition_type: string | null;
+  is_current: boolean;
+}
+
 export interface CigarDetail {
   id: number;
   name: string;
@@ -58,10 +67,29 @@ export interface CigarDetail {
   length_mm: number | null;
   ring_gauge: number | null;
   image_url: string | null;
+  edition_type: string | null;
+  edition: string | null;
+  parent_cigar_id: number | null;
   series: { name: string; slug: string };
   brand: { name: string; slug: string };
   prices: PriceRow[];
   currency: Currency;
+  versions: CigarVersion[];
+}
+
+export interface SeriesGroup {
+  id: number;
+  name: string;
+  slug: string;
+  cigars: CigarSummary[];
+}
+
+export interface BrandCategory {
+  id: number;
+  name: string;
+  slug: string;
+  sort_order: number;
+  series: SeriesGroup[];
 }
 
 export interface BrandDetail {
@@ -70,12 +98,8 @@ export interface BrandDetail {
   slug: string;
   country: string | null;
   image_url: string | null;
-  series: {
-    id: number;
-    name: string;
-    slug: string;
-    cigars: CigarSummary[];
-  }[];
+  categories: BrandCategory[];   // 有分类的系列（分组）
+  series: SeriesGroup[];          // 未分类的系列（平铺）
 }
 
 // ── Fetch helpers ─────────────────────────────────────────────────────────

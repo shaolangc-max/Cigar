@@ -21,13 +21,26 @@ HEADERS = {
 BASE         = "https://lcdh.portmanntabak.ch"
 CATEGORY_URL = f"{BASE}/3-zigarren?resultsPerPage=100"
 
-_ARTICLE_RE = re.compile(r'<article[^>]*>(.*?)</article>', re.DOTALL)
-_TITLE_RE   = re.compile(
+_ARTICLE_RE  = re.compile(r'<article[^>]*>(.*?)</article>', re.DOTALL)
+_TITLE_RE    = re.compile(
     r'product-title[^>]*>\s*<a\s+href="([^"]+)"[^>]*>([^<]+)</a>',
     re.DOTALL,
 )
-_PRICE_RE   = re.compile(r'class="price"[^>]*>\s*([\d.,]+)\s*CHF', re.DOTALL)
-_QTY_RE     = re.compile(r"(\d+)\s*(?:pcs|cigars?|stück|er\s*kiste|box)", re.I)
+_PRICE_RE    = re.compile(r'class="price"[^>]*>\s*([\d.,]+)\s*CHF', re.DOTALL)
+_QTY_RE      = re.compile(r"(\d+)\s*(?:pcs|cigars?|stück|er\s*kiste|box)", re.I)
+_URL_QTY_RE  = re.compile(r"-(\d+)(?:\.html)?$")
+_KNOWN_SIZES = {3, 5, 10, 12, 15, 20, 25, 40, 50}
+
+
+def _count_from_url(url: str) -> int | None:
+    if "slb" in url.lower():   # SLB = Slide Lid Box = 25 支标准装
+        return 25
+    m = _URL_QTY_RE.search(url)
+    if m:
+        n = int(m.group(1))
+        if n in _KNOWN_SIZES:
+            return n
+    return None
 
 
 def _eu_price(raw: str) -> float | None:
@@ -84,6 +97,10 @@ class PortmannTabakScraper(BaseScraper):
 
                     qty_m     = _QTY_RE.search(name)
                     box_count = int(qty_m.group(1)) if qty_m else None
+
+                    # 名字未匹配到数量时，从 URL 回退提取
+                    if box_count is None:
+                        box_count = _count_from_url(product_url)
 
                     items.append(ScrapedItem(
                         source_slug  = self.source_slug,

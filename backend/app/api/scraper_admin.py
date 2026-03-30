@@ -1,10 +1,11 @@
 """
-爬虫监控管理接口 — 查看运行记录、汇总统计、未匹配条目。
+爬虫监控管理接口 — 查看运行记录、汇总统计、未匹配条目、手动触发。
 仅限已登录用户访问（生产环境建议进一步限制为管理员）。
 """
+import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, cast, Float, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -123,3 +124,36 @@ async def list_unmatched(
         }
         for u in rows
     ]
+
+
+# ── GET /sources ───────────────────────────────────────────────────────────────
+
+@router.get("/sources", summary="所有已注册爬虫站点")
+async def list_sources(_user: User = Depends(get_current_user)):
+    import app.scrapers.sites  # noqa: F401
+    from app.scrapers.registry import get_all
+    scrapers = get_all()
+    return [{"source_slug": s.source_slug} for s in scrapers]
+
+
+# ── POST /trigger ──────────────────────────────────────────────────────────────
+
+@router.post("/trigger", status_code=202, summary="触发全站爬取")
+async def trigger_all(_user: User = Depends(get_current_user)):
+    from app.scheduler.tasks import run_all_scrapers
+    asyncio.create_task(run_all_scrapers())
+    return {"status": "triggered", "target": "all"}
+
+
+@router.post("/trigger/{source_slug}", status_code=202, summary="触发单站爬取")
+async def trigger_one(
+    source_slug: str,
+    _user: User = Depends(get_current_user),
+):
+    import app.scrapers.sites  # noqa: F401
+    from app.scrapers.registry import get_by_slug
+    from app.scheduler.tasks import run_single_scraper
+    if not get_by_slug(source_slug):
+        raise HTTPException(404, f"未知站点: {source_slug}")
+    asyncio.create_task(run_single_scraper(source_slug))
+    return {"status": "triggered", "target": source_slug}

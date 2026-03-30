@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { apiLogin, apiMe, saveToken, saveUser } from "@/lib/auth";
 
 const GOOGLE_AUTH_URL =
@@ -16,7 +16,6 @@ const GOOGLE_AUTH_URL =
   }).toString();
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
   const [error, setError]       = useState("");
@@ -45,7 +44,7 @@ export default function LoginPage() {
         登录
       </h1>
       <p style={{ color: "var(--apple-secondary)", fontSize: 14, marginBottom: 28 }}>
-        没有账号？<a href="/register" style={{ color: "var(--apple-blue)", textDecoration: "none" }}>免费注册</a>
+        没有账号？<Link href="/register" style={{ color: "var(--apple-blue)", textDecoration: "none" }}>免费注册</Link>
       </p>
 
       {/* Google 登录按钮 */}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
+import Link from "next/link";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
@@ -175,7 +176,7 @@ export default function PriceHistoryChart({
                 backgroundColor: "var(--apple-surface)",
                 fontSize: 12,
               }}
-              formatter={(value: number) => [`${currency} ${value.toFixed(2)}`, ""]}
+              formatter={(value: unknown) => [`${currency} ${typeof value === "number" ? value.toFixed(2) : value}`, ""]}
             />
             <Legend
               iconType="circle"
@@ -221,7 +222,7 @@ export default function PriceHistoryChart({
             <p style={{ fontSize: 12, color: "var(--apple-secondary)", margin: "0 0 16px" }}>
               查看各平台价格走势，找准最低价时机
             </p>
-            <a
+            <Link
               href="/pricing"
               style={{
                 display: "inline-block",
@@ -235,7 +236,7 @@ export default function PriceHistoryChart({
               }}
             >
               解锁 PRO
-            </a>
+            </Link>
           </div>
         </div>
       )}

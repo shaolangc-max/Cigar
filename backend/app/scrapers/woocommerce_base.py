@@ -42,6 +42,31 @@ def _clean(html: str) -> str:
     return re.sub(r"<[^>]+>", " ", html or "").strip()
 
 
+# permalink 倒数第二段 → 标准品牌名
+# 适用于德语系 WooCommerce 站（品牌作为子分类，不写入商品名）
+_BRAND_SLUG_MAP: dict[str, str] = {
+    "cohiba-zigarren":          "Cohiba",
+    "montecristo-zigarren":     "Montecristo",
+    "romeo-y-julieta-zigarren": "Romeo Y Julieta",
+    "partagas-zigarren":        "Partagas",
+    "h-upmann-zigarren":        "H Upmann",
+    "bolivar-zigarren":         "Bolivar",
+    "punch-zigarren":           "Punch",
+    "trinidad-zigarren":        "Trinidad",
+    "hoyo-de-monterrey-zigarren": "Hoyo De Monterrey",
+    "por-larranaga-zigarren":   "Por Larranaga",
+    "saint-luis-rey-zigarren":  "Saint Luis Rey",
+    "quai-dorsay-zigarren":     "Quai D Orsay",
+}
+
+
+def _brand_from_permalink(permalink: str) -> str | None:
+    """从 permalink 倒数第二段提取品牌名，无法识别时返回 None。"""
+    parts = permalink.rstrip("/").split("/")
+    segment = parts[-2] if len(parts) >= 2 else ""
+    return _BRAND_SLUG_MAP.get(segment)
+
+
 class WooCommerceScraper(BaseScraper):
     """
     Abstract WooCommerce Store API scraper.
@@ -76,8 +101,10 @@ class WooCommerceScraper(BaseScraper):
                         break
 
                     for p in products:
-                        name = p.get("name", "")
+                        name  = p.get("name", "")
                         url_p = p.get("permalink", "")
+                        brand = _brand_from_permalink(url_p)
+                        raw_name = f"{brand} {name}" if brand else name
                         prices_obj = p.get("prices", {})
                         minor = prices_obj.get("currency_minor_unit", 2)
                         divisor = 10 ** minor
@@ -100,7 +127,7 @@ class WooCommerceScraper(BaseScraper):
                         if qty and qty > 1:
                             items.append(ScrapedItem(
                                 source_slug=self.source_slug,
-                                raw_name=name,
+                                raw_name=raw_name,
                                 product_url=url_p,
                                 price_single=None,
                                 price_box=price,
@@ -111,7 +138,7 @@ class WooCommerceScraper(BaseScraper):
                         else:
                             items.append(ScrapedItem(
                                 source_slug=self.source_slug,
-                                raw_name=name,
+                                raw_name=raw_name,
                                 product_url=url_p,
                                 price_single=price,
                                 price_box=None,

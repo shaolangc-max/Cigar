@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = "cigar2026"
 
+    # CORS — 精确来源白名单（localhost 开发用）
+    cors_origins: list[str] = ["http://localhost:3001"]
+    # CORS — 正则来源，覆盖整个 192.168.31.x 局域网段（任意端口）
+    cors_origin_regex: str = r"http://192\.168\.31\.\d{1,3}(:\d+)?"
+
     class Config:
         env_file = ".env"
 

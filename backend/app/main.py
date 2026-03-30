@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import func, select
 
-from app.api import brands, cigars, prices, admin, auth, billing, alerts, scraper_admin
+from app.api import brands, cigars, prices, admin, auth, billing, alerts, scraper_admin, admin_tools
 from app.admin import create_admin
 from app.config import settings
 from app.db import AsyncSessionLocal
@@ -59,7 +59,8 @@ app = FastAPI(title="Cigar Price API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=settings.jwt_secret_key)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -74,6 +75,7 @@ app.include_router(prices.router, prefix="/api/v1")
 app.include_router(admin.router,  prefix="/api/v1")
 app.include_router(alerts.router, prefix="/api/v1")
 app.include_router(scraper_admin.router, prefix="/api/v1")
+app.include_router(admin_tools.router)
 
 
 @app.get("/api/v1/health")

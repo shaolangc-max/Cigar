@@ -25,8 +25,21 @@ _STOCK_RE   = re.compile(r'x-data-product-quantity="(\d*)"')
 _NAME_RE    = re.compile(r'itemprop="name"[^>]*><a href="([^"]+)"[^>]*>([^<]+)<')
 _PRICE_RE   = re.compile(r'itemprop="price"\s+content="([^"]+)"')
 _CURR_RE    = re.compile(r'itemprop="priceCurrency"\s+content="([^"]+)"')
-_QTY_RE     = re.compile(r"(\d+)\s*(?:pcs|cigars?|stück|er\s*kiste|box)", re.I)
-_PAGE_RE    = re.compile(r'resultsPerPage=100&page=(\d+)')
+_QTY_RE      = re.compile(r"(\d+)\s*(?:pcs|cigars?|stück|er\s*kiste|box)", re.I)
+_PAGE_RE     = re.compile(r'resultsPerPage=100&page=(\d+)')
+_URL_QTY_RE  = re.compile(r"-(\d+)(?:\.html)?$")
+_KNOWN_SIZES = {3, 5, 10, 12, 15, 20, 25, 40, 50}
+
+
+def _count_from_url(url: str) -> int | None:
+    if "slb" in url.lower():
+        return 25
+    m = _URL_QTY_RE.search(url)
+    if m:
+        n = int(m.group(1))
+        if n in _KNOWN_SIZES:
+            return n
+    return None
 
 
 @register
@@ -70,6 +83,10 @@ class CigarmustScraper(BaseScraper):
 
                     qty_m = _QTY_RE.search(name)
                     box_count = int(qty_m.group(1)) if qty_m else None
+
+                    # 名字未匹配到数量时，从 URL 回退提取
+                    if box_count is None:
+                        box_count = _count_from_url(product_url)
 
                     items.append(ScrapedItem(
                         source_slug=self.source_slug,

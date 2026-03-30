@@ -21,10 +21,12 @@ HEADERS = {
 BASE       = "https://www.havahavana.com"
 COLLECTION = "all-cigars"
 
-_COUNT_RE = re.compile(
+_COUNT_RE    = re.compile(
     r"(?:box\s+of\s+|pack\s+of\s+)?(\d+)\s*(?:cigars?|pcs?|sticks?|pack)?",
     re.I,
 )
+_HANDLE_RE   = re.compile(r"-(\d+)$")
+_KNOWN_SIZES = {3, 5, 10, 12, 15, 20, 25, 40, 50}
 
 
 def _parse(products: list[dict], source_slug: str) -> list[ScrapedItem]:
@@ -70,6 +72,16 @@ def _parse(products: list[dict], source_slug: str) -> list[ScrapedItem]:
             else:
                 if price_single is None:
                     price_single = price
+
+        # 变体标题未能识别数量时，从 handle 回退提取
+        if box_count is None and price_single is not None:
+            m = _HANDLE_RE.search(handle)
+            if m:
+                n = int(m.group(1))
+                if n in _KNOWN_SIZES:
+                    box_count    = n
+                    price_box    = price_single
+                    price_single = None
 
         if price_single is not None or price_box is not None:
             items.append(ScrapedItem(

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import Image from "next/image";
 import { getUser, logout, type AuthUser } from "@/lib/auth";
 
 export default function HeaderNav() {
@@ -22,20 +24,22 @@ export default function HeaderNav() {
 
   return (
     <nav style={{ display: "flex", alignItems: "center", gap: 20 }}>
-      <a href="/" className="apple-nav-link" style={{ fontSize: 14 }}>品牌</a>
-      <a href="/search" className="apple-nav-link" style={{ fontSize: 14 }}>搜索</a>
-      <a href="/pricing" className="apple-nav-link" style={{ fontSize: 14 }}>订阅</a>
+      <Link href="/" className="apple-nav-link" style={{ fontSize: 14 }}>品牌</Link>
+      <Link href="/search" className="apple-nav-link" style={{ fontSize: 14 }}>搜索</Link>
+      <Link href="/pricing" className="apple-nav-link" style={{ fontSize: 14 }}>订阅</Link>
 
       {user ? (
         // 已登录：显示头像/昵称 + 注销按钮
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {user.avatar_url ? (
-              <img
+              <Image
                 src={user.avatar_url}
                 alt="avatar"
+                width={28}
+                height={28}
                 referrerPolicy="no-referrer"
-                style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover" }}
+                style={{ borderRadius: "50%", objectFit: "cover" }}
               />
             ) : (
               <div style={{
@@ -78,7 +82,7 @@ export default function HeaderNav() {
         </div>
       ) : (
         // 未登录：显示登录按钮
-        <a
+        <Link
           href="/login"
           style={{
             fontSize: 13,
@@ -91,7 +95,7 @@ export default function HeaderNav() {
           }}
         >
           登录
-        </a>
+        </Link>
       )}
     </nav>
   );

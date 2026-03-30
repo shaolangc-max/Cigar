@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import "./globals.css";
 import HeaderNav from "./components/HeaderNav";
 
@@ -53,9 +54,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             alignItems: "center",
             justifyContent: "space-between",
           }}>
-            <a href="/" style={{ color: "var(--apple-label)", fontSize: 17, fontWeight: 600, letterSpacing: "-0.02em", textDecoration: "none" }}>
+            <Link href="/" style={{ color: "var(--apple-label)", fontSize: 17, fontWeight: 600, letterSpacing: "-0.02em", textDecoration: "none" }}>
               海淘研究院
-            </a>
+            </Link>
             <HeaderNav />
           </div>
         </header>

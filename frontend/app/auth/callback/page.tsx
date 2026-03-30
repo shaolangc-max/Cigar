@@ -1,20 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { saveToken, saveUser, apiMe } from "@/lib/auth";
 
-/**
- * Google OAuth 回调页
- * 后端授权完成后会重定向到：/auth/callback?token=xxx
- * 本页读取 token，存入 localStorage，然后跳回首页
- */
-export default function AuthCallbackPage() {
+function AuthCallbackInner() {
   const router = useRouter();
   const params = useSearchParams();
   const [error, setError] = useState("");
+  const calledRef = useRef(false);
 
   useEffect(() => {
+    if (calledRef.current) return;
+    calledRef.current = true;
+
     const token = params.get("token");
     const err   = params.get("error");
 
@@ -23,7 +24,6 @@ export default function AuthCallbackPage() {
       return;
     }
 
-    // 存 token，再拉取用户信息
     saveToken(token);
     apiMe(token)
       .then(user => {
@@ -39,7 +39,7 @@ export default function AuthCallbackPage() {
     return (
       <div style={{ maxWidth: 400, margin: "80px auto", textAlign: "center" }}>
         <p style={{ color: "#FF3B30", fontSize: 15, marginBottom: 24 }}>{error}</p>
-        <a href="/login" style={{ color: "var(--apple-blue)", fontSize: 14 }}>返回登录页</a>
+        <Link href="/login" style={{ color: "var(--apple-blue)", fontSize: 14 }}>返回登录页</Link>
       </div>
     );
   }
@@ -48,5 +48,15 @@ export default function AuthCallbackPage() {
     <div style={{ maxWidth: 400, margin: "80px auto", textAlign: "center" }}>
       <p style={{ color: "var(--apple-secondary)", fontSize: 15 }}>登录中，请稍候…</p>
     </div>
+  );
+}
+
+export default function AuthCallbackPage() {
+  return (
+    <Suspense fallback={<div style={{ maxWidth: 400, margin: "80px auto", textAlign: "center" }}>
+      <p style={{ color: "var(--apple-secondary)", fontSize: 15 }}>登录中，请稍候…</p>
+    </div>}>
+      <AuthCallbackInner />
+    </Suspense>
   );
 }

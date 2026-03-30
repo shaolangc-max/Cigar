@@ -27,11 +27,32 @@ async def get_cigar(
         .options(
             selectinload(Cigar.series).selectinload(Series.brand),
             selectinload(Cigar.prices).selectinload(Price.source),
+            selectinload(Cigar.versions),
         )
     )
     cigar = result.scalar_one_or_none()
     if not cigar:
         raise HTTPException(404, "Cigar not found")
+
+    # 查兄弟版本：若当前是子版本，取父 + 其他子；若是父，取所有子
+    versions: list[dict] = []
+    parent_id = cigar.parent_cigar_id or cigar.id
+    siblings_result = await db.execute(
+        select(Cigar).where(
+            (Cigar.parent_cigar_id == parent_id) | (Cigar.id == parent_id)
+        ).order_by(Cigar.edition.nullsfirst(), Cigar.name)
+    )
+    siblings = siblings_result.scalars().all()
+    if len(siblings) > 1:
+        for s in siblings:
+            versions.append({
+                "id":           s.id,
+                "name":         s.name,
+                "slug":         s.slug,
+                "edition":      s.edition,
+                "edition_type": s.edition_type,
+                "is_current":   s.id == cigar.id,
+            })
 
     # 汇率
     rates_result = await db.execute(select(ExchangeRate))
@@ -40,8 +61,9 @@ async def get_cigar(
     def convert(amount: float | None, from_ccy: str) -> float | None:
         if amount is None:
             return None
-        in_usd = amount / rates.get(from_ccy, 1.0)
-        return round(in_usd * rates.get(currency, 1.0), 2)
+        from_rate = rates.get(from_ccy, 1.0) or 1.0
+        to_rate   = rates.get(currency, 1.0)  or 1.0
+        return round(amount / from_rate * to_rate, 2)
 
     prices = [
         {
@@ -66,17 +88,21 @@ async def get_cigar(
     prices.sort(key=lambda x: (x["price_single"] or float("inf")))
 
     return {
-        "id":        cigar.id,
-        "name":      cigar.name,
-        "slug":      cigar.slug,
-        "vitola":    cigar.vitola,
-        "length_mm": cigar.length_mm,
-        "ring_gauge": cigar.ring_gauge,
-        "image_url": cigar.image_url,
-        "series":    {"name": cigar.series.name, "slug": cigar.series.slug},
-        "brand":     {"name": cigar.series.brand.name, "slug": cigar.series.brand.slug},
-        "prices":    prices,
-        "currency":  currency,
+        "id":              cigar.id,
+        "name":            cigar.name,
+        "slug":            cigar.slug,
+        "vitola":          cigar.vitola,
+        "length_mm":       cigar.length_mm,
+        "ring_gauge":      cigar.ring_gauge,
+        "image_url":       cigar.image_url,
+        "edition_type":    cigar.edition_type,
+        "edition":         cigar.edition,
+        "parent_cigar_id": cigar.parent_cigar_id,
+        "series":          {"name": cigar.series.name, "slug": cigar.series.slug},
+        "brand":           {"name": cigar.series.brand.name, "slug": cigar.series.brand.slug},
+        "prices":          prices,
+        "currency":        currency,
+        "versions":        versions,
     }
 
 

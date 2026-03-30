@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { api, CigarDetail, Currency, PriceRow } from "@/lib/api";
+import { api, CigarDetail, CigarVersion, Currency, PriceRow } from "@/lib/api";
 import CurrencySwitcher from "./CurrencySwitcher";
 import PriceHistoryChart from "./PriceHistoryChart";
 import AlertButtons from "./AlertButtons";
@@ -138,6 +138,79 @@ function PriceTable({ rows, currency, title, dimmed = false }: {
   );
 }
 
+const EDITION_STYLES: Record<string, { bg: string; border: string; color: string; icon: string }> = {
+  edicion_limitada: { bg: "#ede9fe", border: "#c4b5fd", color: "#5b21b6", icon: "✦" },
+  regional:         { bg: "#d1fae5", border: "#6ee7b7", color: "#065f46", icon: "🌍" },
+  reserva:          { bg: "#fef3c7", border: "#fcd34d", color: "#92400e", icon: "🍂" },
+  gran_reserva:     { bg: "#fff7ed", border: "#fb923c", color: "#7c2d12", icon: "🔥" },
+  aniversario:      { bg: "#fce7f3", border: "#f9a8d4", color: "#9d174d", icon: "★" },
+  lcdh:             { bg: "#f0f9ff", border: "#7dd3fc", color: "#0c4a6e", icon: "🏛" },
+};
+
+function EditionBadge({ editionType, edition }: { editionType: string; edition: string }) {
+  const s = EDITION_STYLES[editionType] ?? EDITION_STYLES.edicion_limitada;
+  return (
+    <span style={{
+      fontSize: 12, fontWeight: 600, color: s.color,
+      background: s.bg, border: `1px solid ${s.border}`,
+      borderRadius: 8, padding: "4px 10px",
+      display: "inline-flex", alignItems: "center", gap: 4,
+    }}>
+      {s.icon} {edition}
+    </span>
+  );
+}
+
+function VersionsSwitcher({ versions }: { versions: CigarVersion[] }) {
+  if (versions.length === 0) return null;
+  const BADGE: Record<string, { bg: string; color: string; label: string }> = {
+    edicion_limitada: { bg: "#ede9fe", color: "#5b21b6", label: "EL" },
+    regional:         { bg: "#d1fae5", color: "#065f46", label: "RE" },
+    reserva:          { bg: "#fef3c7", color: "#92400e", label: "Reserva" },
+    gran_reserva:     { bg: "#fff7ed", color: "#7c2d12", label: "Gran Reserva" },
+    aniversario:      { bg: "#fce7f3", color: "#9d174d", label: "Aniv." },
+    lcdh:             { bg: "#f0f9ff", color: "#0c4a6e", label: "LCDH" },
+  };
+  return (
+    <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid var(--apple-separator)" }}>
+      <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase",
+                  color: "var(--apple-tertiary)", margin: "0 0 10px 0" }}>
+        所有版本
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {versions.map((v) => {
+          const b = v.edition_type ? BADGE[v.edition_type] : null;
+          const label = v.edition ?? "标准版";
+          if (v.is_current) {
+            return (
+              <span key={v.id} style={{
+                fontSize: 13, fontWeight: 600, color: "#fff",
+                background: "var(--apple-label)", borderRadius: 12, padding: "7px 14px",
+                border: "1px solid var(--apple-label)",
+              }}>
+                {label}
+                {b && <span style={{ fontSize: 10, fontWeight: 600, background: b.bg, color: b.color,
+                              borderRadius: 6, padding: "2px 6px", marginLeft: 6 }}>{b.label}</span>}
+              </span>
+            );
+          }
+          return (
+            <Link key={v.id} href={`/cigar/${v.slug}`} style={{
+              fontSize: 13, fontWeight: 500, color: "var(--apple-secondary)",
+              background: "var(--apple-fill)", borderRadius: 12, padding: "7px 14px",
+              border: "1px solid var(--apple-border)", textDecoration: "none",
+            }}>
+              {label}
+              {b && <span style={{ fontSize: 10, fontWeight: 600, background: b.bg, color: b.color,
+                            borderRadius: 6, padding: "2px 6px", marginLeft: 6 }}>{b.label}</span>}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const VALID_CURRENCIES: Currency[] = ["USD", "CNY", "HKD", "EUR"];
 
 export default async function CigarPage({
@@ -178,7 +251,18 @@ export default async function CigarPage({
           {data.brand.name}
         </Link>
         <span>/</span>
-        <span style={{ color: "var(--apple-label)" }}>{data.name}</span>
+        {data.parent_cigar_id && data.versions.length > 0 && (() => {
+          const parent = data.versions.find(v => !v.edition_type);
+          return parent ? (
+            <>
+              <Link href={`/cigar/${parent.slug}`} style={{ color: "var(--apple-blue)", textDecoration: "none" }}>
+                {parent.name}
+              </Link>
+              <span>/</span>
+            </>
+          ) : null;
+        })()}
+        <span style={{ color: "var(--apple-label)" }}>{data.edition ?? data.name}</span>
       </nav>
 
       {/* Cigar Header */}
@@ -188,35 +272,34 @@ export default async function CigarPage({
         border: "1px solid var(--apple-border)",
         padding: "32px 40px",
         boxShadow: "0 2px 20px rgba(0,0,0,0.05)",
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "space-between",
-        gap: 24,
-        flexWrap: "wrap",
       }}>
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.025em", margin: 0 }}>{data.name}</h1>
-          <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {[data.vitola, data.length_mm ? `${data.length_mm} mm` : null, data.ring_gauge ? `环径 ${data.ring_gauge}` : null]
-              .filter(Boolean)
-              .map((tag) => (
-                <span key={tag} style={{
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: "var(--apple-secondary)",
-                  backgroundColor: "var(--apple-fill)",
-                  borderRadius: 8,
-                  padding: "4px 10px",
-                }}>
-                  {tag}
-                </span>
-              ))}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 24, flexWrap: "wrap" }}>
+          <div>
+            <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.025em", margin: 0 }}>{data.name}</h1>
+            <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {data.edition_type && data.edition && (
+                <EditionBadge editionType={data.edition_type} edition={data.edition} />
+              )}
+              {[data.vitola, data.length_mm ? `${data.length_mm} mm` : null, data.ring_gauge ? `环径 ${data.ring_gauge}` : null]
+                .filter(Boolean)
+                .map((tag) => (
+                  <span key={tag} style={{
+                    fontSize: 12, fontWeight: 500,
+                    color: "var(--apple-secondary)",
+                    backgroundColor: "var(--apple-fill)",
+                    borderRadius: 8, padding: "4px 10px",
+                  }}>
+                    {tag}
+                  </span>
+                ))}
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 12 }}>
+            <CurrencySwitcher current={currency} slug={slug} />
+            <AlertButtons cigarId={data.id} currency={currency} />
           </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 12 }}>
-          <CurrencySwitcher current={currency} slug={slug} />
-          <AlertButtons cigarId={data.id} currency={currency} />
-        </div>
+        <VersionsSwitcher versions={data.versions} />
       </div>
 
       {/* Price Tables */}

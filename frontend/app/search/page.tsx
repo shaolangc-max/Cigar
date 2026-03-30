@@ -38,7 +38,7 @@ function QuotaModal({ onClose }: { onClose: () => void }) {
         <p style={{ fontSize: 13, color: "var(--apple-secondary)", margin: "0 0 24px" }}>
           升级 PRO，享无限次搜索 + 价格历史趋势 + 降价提醒
         </p>
-        <a
+        <Link
           href="/pricing"
           style={{
             display: "block",
@@ -53,7 +53,7 @@ function QuotaModal({ onClose }: { onClose: () => void }) {
           }}
         >
           立即升级 PRO
-        </a>
+        </Link>
         <button
           onClick={onClose}
           style={{
@@ -166,7 +166,7 @@ export default function SearchPage() {
       {error ? (
         <p style={{ fontSize: 15, color: "#ff3b30" }}>搜索失败，请稍后重试</p>
       ) : searched && results.length === 0 ? (
-        <p style={{ fontSize: 15, color: "var(--apple-tertiary)" }}>未找到 "{q}" 相关结果</p>
+        <p style={{ fontSize: 15, color: "var(--apple-tertiary)" }}>未找到「{q}」相关结果</p>
       ) : searched && results.length > 0 ? (
         <div>
           <p style={{ fontSize: 12, color: "var(--apple-tertiary)", margin: "0 0 14px 4px" }}>

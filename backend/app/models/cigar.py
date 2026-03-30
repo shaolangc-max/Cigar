@@ -1,3 +1,4 @@
+from typing import Optional
 from sqlalchemy import String, Float, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
@@ -9,17 +10,25 @@ class Cigar(Base):
     vitola: 茄型名称，如 Robusto / Churchill / Lancero
     length_mm: 茄体长度（毫米）
     ring_gauge: 环径（1/64 英寸）
+    edition_type: reserva / gran_reserva / edicion_limitada / regional / aniversario / lcdh / None
+    edition: 显示用标签，如 "Cosecha 2014" / "Edición Limitada 2021"
+    parent_cigar_id: 指向标准版 cigar.id，标准版本身为 None
     """
     __tablename__ = "cigars"
 
-    id:          Mapped[int]        = mapped_column(primary_key=True)
-    series_id:   Mapped[int]        = mapped_column(ForeignKey("series.id"), index=True)
-    name:        Mapped[str]        = mapped_column(String(200))   # 完整商品名
-    slug:        Mapped[str]        = mapped_column(String(250), unique=True, index=True)
-    vitola:      Mapped[str | None] = mapped_column(String(100))   # 茄型
-    length_mm:   Mapped[float | None] = mapped_column(Float)
-    ring_gauge:  Mapped[float | None] = mapped_column(Float)
-    image_url:   Mapped[str | None] = mapped_column(String(500))
+    id:               Mapped[int]            = mapped_column(primary_key=True)
+    series_id:        Mapped[int]            = mapped_column(ForeignKey("series.id"), index=True)
+    name:             Mapped[str]            = mapped_column(String(200))
+    slug:             Mapped[str]            = mapped_column(String(250), unique=True, index=True)
+    vitola:           Mapped[Optional[str]]  = mapped_column(String(100), nullable=True)
+    length_mm:        Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ring_gauge:       Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    image_url:        Mapped[Optional[str]]  = mapped_column(String(500), nullable=True)
+    edition_type:     Mapped[Optional[str]]  = mapped_column(String(50), nullable=True)
+    edition:          Mapped[Optional[str]]  = mapped_column(String(200), nullable=True)
+    parent_cigar_id:  Mapped[Optional[int]]  = mapped_column(ForeignKey("cigars.id"), nullable=True, index=True)
 
-    series: Mapped["Series"]          = relationship(back_populates="cigars")
-    prices: Mapped[list["Price"]]     = relationship(back_populates="cigar")
+    series:   Mapped["Series"]        = relationship(back_populates="cigars")
+    prices:   Mapped[list["Price"]]   = relationship(back_populates="cigar")
+    versions: Mapped[list["Cigar"]]   = relationship("Cigar", foreign_keys=[parent_cigar_id],
+                                                      primaryjoin="Cigar.parent_cigar_id == Cigar.id")

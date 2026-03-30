@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { apiRegister, apiMe, saveToken, saveUser } from "@/lib/auth";
 
 const GOOGLE_AUTH_URL =
@@ -16,7 +16,6 @@ const GOOGLE_AUTH_URL =
   }).toString();
 
 export default function RegisterPage() {
-  const router = useRouter();
   const [email, setEmail]           = useState("");
   const [password, setPassword]     = useState("");
   const [nickname, setNickname]     = useState("");
@@ -58,7 +57,7 @@ export default function RegisterPage() {
         创建账号
       </h1>
       <p style={{ color: "var(--apple-secondary)", fontSize: 14, marginBottom: 28 }}>
-        已有账号？<a href="/login" style={{ color: "var(--apple-blue)", textDecoration: "none" }}>直接登录</a>
+        已有账号？<Link href="/login" style={{ color: "var(--apple-blue)", textDecoration: "none" }}>直接登录</Link>
       </p>
 
       {/* Google 一键注册 */}

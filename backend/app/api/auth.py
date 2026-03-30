@@ -81,8 +81,11 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
             detail="该邮箱已注册，请直接登录",
         )
 
-    # 获取注册 IP（用于风控，不对外暴露）
-    client_ip = request.client.host if request.client else None
+    # 获取注册 IP（优先取反向代理头，用于风控，不对外暴露）
+    client_ip = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (request.client.host if request.client else None)
+    )
 
     user = User(
         email=body.email,
@@ -215,7 +218,10 @@ async def google_exchange(request: Request, db: AsyncSession = Depends(get_db)):
     email       = google_info.get("email", "")
     nickname    = google_info.get("name")
     avatar_url  = google_info.get("picture")
-    client_ip   = request.client.host if request.client else None
+    client_ip = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (request.client.host if request.client else None)
+    )
 
     # ③ 查找或创建用户
     oauth_result = await db.execute(
@@ -228,6 +234,8 @@ async def google_exchange(request: Request, db: AsyncSession = Depends(get_db)):
 
     if oauth_account:
         user = await db.get(User, oauth_account.user_id)
+        if not user:
+            raise HTTPException(status_code=500, detail="用户数据异常，请联系管理员")
     else:
         user_result = await db.execute(select(User).where(User.email == email))
         user = user_result.scalar_one_or_none()
