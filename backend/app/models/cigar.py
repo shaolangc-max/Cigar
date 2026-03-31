@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import String, Float, ForeignKey
+from sqlalchemy import String, Float, Integer, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
@@ -29,6 +29,7 @@ class Cigar(Base):
     edition:          Mapped[Optional[str]]  = mapped_column(String(200), nullable=True)
     parent_cigar_id:  Mapped[Optional[int]]  = mapped_column(ForeignKey("cigars.id"), nullable=True, index=True)
     category_id:      Mapped[Optional[int]]  = mapped_column(ForeignKey("categories.id"), nullable=True, index=True)
+    sort_order:       Mapped[int]            = mapped_column(Integer, default=0, server_default="0")
 
     series:    Mapped["Series"]        = relationship(back_populates="cigars")
     prices:    Mapped[list["Price"]]   = relationship(back_populates="cigar")

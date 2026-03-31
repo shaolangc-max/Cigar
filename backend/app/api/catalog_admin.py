@@ -22,6 +22,7 @@ from app.models.source import Source
 from app.models.scraper_run import UnmatchedItem
 from app.models.alias import ScraperNameAlias
 from app.models.price import Price, PriceHistory
+from app.scrapers.matcher import similarity
 from sqlalchemy import select, func, text as _sql
 
 router = APIRouter(prefix="/admin-tools/catalog", tags=["catalog-admin"])
@@ -132,6 +133,15 @@ async def catalog_page(request: Request):
                    padding: 1px 4px; border-radius: 4px; transition: opacity .15s; flex-shrink:0; }}
   .tree-item:hover .cat-edit-btn {{ opacity: 1; }}
   .cat-edit-btn:hover {{ background: #e8f0fe; color: #0071e3; }}
+  .cat-add-btn {{ opacity: 0; font-size: 14px; font-weight: 700; color: #86868b; cursor: pointer;
+                  padding: 0 4px; border-radius: 4px; transition: opacity .15s; flex-shrink:0; line-height:1; }}
+  .tree-item:hover .cat-add-btn {{ opacity: 1; }}
+  .cat-add-btn:hover {{ background: #e8ffe8; color: #22c55e; }}
+  .cat-inline-input {{ font-size: 13px; font-weight: 600; border: 1.5px solid #0071e3;
+                       border-radius: 4px; padding: 0 6px; outline: none; background: #fff;
+                       min-width: 80px; max-width: 180px; height: 22px; }}
+  .inline-add-row {{ display: flex; align-items: center; gap: 8px; padding: 3px 8px; }}
+  .inline-add-hint {{ font-size: 11px; color: #aaa; }}
   .drag-handle {{ cursor: grab; color: #c8c8d0; font-size: 13px; flex-shrink:0;
                   padding: 0 3px; user-select:none; }}
   .drag-handle:hover {{ color: #86868b; }}
@@ -143,6 +153,12 @@ async def catalog_page(request: Request):
   .indent-2 {{ margin-left: 20px; }}
   .indent-3 {{ margin-left: 40px; }}
   .indent-4 {{ margin-left: 60px; }}
+  .tree-cigar-handle {{ cursor: grab; color: transparent; font-size: 11px; padding: 0 2px; flex-shrink:0; user-select:none; }}
+  .tree-cigar:hover .tree-cigar-handle {{ color: #c8c8d0; }}
+  .tree-cigar-handle:hover {{ color: #86868b !important; }}
+  .tree-cigar-handle:active {{ cursor: grabbing; }}
+  .tree-cigar.drop-before {{ border-top: 2px solid #0071e3; }}
+  .tree-cigar.drop-after  {{ border-bottom: 2px solid #0071e3; }}
   .tree-cigar {{ display: flex; align-items: center; padding: 3px 8px 3px 0;
                  font-size: 12px; color: #444; cursor: pointer; border-radius: 6px;
                  transition: background .12s; white-space: nowrap; overflow: hidden;
@@ -158,6 +174,10 @@ async def catalog_page(request: Request):
     border: 1px solid #d0d0d5; border-radius: 8px; font-size: 14px; font-family: inherit; }}
   .btn-row {{ display: flex; gap: 8px; margin-top: 10px; }}
   /* cigar rows */
+  .cigar-del-btn {{ opacity: 0; font-size: 13px; color: #aaa; cursor: pointer; padding: 2px 5px;
+                   border-radius: 4px; transition: opacity .15s; flex-shrink: 0; }}
+  .cigar-row:hover .cigar-del-btn {{ opacity: 1; }}
+  .cigar-del-btn:hover {{ background: #fee2e2; color: #dc2626; }}
   .cigar-row {{ display: flex; align-items: center; gap: 8px; padding: 9px 12px;
                 border-radius: 10px; border: 1px solid #e0e0e5; margin-bottom: 6px;
                 background: #fff; transition: background .2s; }}
@@ -415,37 +435,52 @@ function buildTreeHtml(parentId, depth) {{
       : `<span class="cat-toggle-ph"></span>`;
     // cigars directly in this category (using effective cat id to reflect pending changes)
     const directCigars = isCollapsed ? [] : cigars.filter(c2 => effectiveCatId(c2) === c.id);
-    const cigarListHtml = directCigars.map(c2 => {{
+    const sortedCigars = directCigars.slice().sort((a,b) => (a.sort_order||0)-(b.sort_order||0));
+    const cigarListHtml = sortedCigars.map(c2 => {{
       const cigarIndent = 22 + depth * 20;
-      return `<div class="tree-cigar" style="margin-left:${{cigarIndent}}px"
-                   onclick="scrollToCigar(${{c2.id}})" title="${{c2.name}}">
+      return `<div class="tree-cigar" data-cigar-id="${{c2.id}}" data-cat-id="${{c.id}}"
+                   style="margin-left:${{cigarIndent}}px" title="${{c2.name}}"
+                   draggable="false"
+                   onclick="scrollToCigar(${{c2.id}})"
+                   ondragstart="treeCigarReorderStart(${{c2.id}},${{c.id}},event)"
+                   ondragend="treeCigarReorderEnd(event)"
+                   ondragover="treeCigarDragOver(${{c.id}},event)"
+                   ondragleave="treeCigarDragLeave(event)"
+                   ondrop="treeCigarDrop(${{c.id}},event)">
+          <span class="tree-cigar-handle" onmousedown="this.parentElement.draggable=true" title="拖拽排序">⠿</span>
           <span class="tree-cigar-dot">·</span>
           <span style="overflow:hidden;text-overflow:ellipsis">${{c2.name}}</span>
         </div>`;
     }}).join('');
     const childHtml = (hasKids && !isCollapsed) ? buildTreeHtml(c.id, depth + 1) : '';
-    const nameClick = hasToggle ? `onclick="toggleCat(${{c.id}},event)"` : '';
-    return `<div class="tree-item ${{indent}}" draggable="true"
+    const nameClick = hasToggle
+      ? `onclick="toggleCat(${{c.id}},event)" ondblclick="startInlineRename(${{c.id}},event)"`
+      : `ondblclick="startInlineRename(${{c.id}},event)"`;
+    return `<div class="tree-item ${{indent}}" draggable="false"
         ondragstart="catDragStart(${{c.id}},event)"
-        ondragend="catDragEnd(event)"
+        ondragend="catDragEnd(event);this.draggable=false"
         ondragover="catDragOver(${{c.id}},event)"
         ondragleave="catDragLeave(event)"
         ondrop="catDrop(${{c.id}},event)">
-        <span class="drag-handle" title="拖拽移动">⠿</span>
-        ${{toggleBtn}}<span class="name" ${{nameClick}}>${{c.name}}</span>${{badge}}
+        <span class="drag-handle" title="拖拽移动" onmousedown="this.parentElement.draggable=true">⠿</span>
+        ${{toggleBtn}}<span class="name" ${{nameClick}} title="双击更名">${{c.name}}</span>${{badge}}
+        <span class="cat-add-btn" onclick="startInlineAdd(${{c.id}},event)" title="新建子分类">＋</span>
         <span class="cat-edit-btn" onclick="editCategory(${{c.id}})" title="编辑分类">✎</span>
       </div>${{cigarListHtml}}${{childHtml}}`;
   }}).join('');
 }}
 
 // ── Drag-and-drop (categories + cigars) ──────────────────────────────────────
-let dragCatId       = null;
-let dragCigarId     = null;
-let dragUnmatchedId = null;
-let dragExpandTimer = null;
+let dragCatId         = null;
+let dragCigarId       = null;
+let dragUnmatchedId   = null;
+let dragTreeCigarId   = null;   // cigar being reordered inside tree
+let dragTreeCigarCat  = null;   // its current catId
+let dragExpandTimer   = null;
 
 function _dragReset() {{
   dragCatId = null; dragCigarId = null; dragUnmatchedId = null;
+  dragTreeCigarId = null; dragTreeCigarCat = null;
   clearExpandTimer();
 }}
 
@@ -491,8 +526,110 @@ function catDragLeave(event) {{
   clearExpandTimer();
 }}
 
+// ── Tree-cigar 排序拖拽 ────────────────────────────────────────────────────────
+function treeCigarReorderStart(cigarId, catId, event) {{
+  _dragReset();
+  dragTreeCigarId  = cigarId;
+  dragTreeCigarCat = catId;
+  event.dataTransfer.effectAllowed = 'move';
+  setTimeout(() => event.target.style.opacity = '0.45', 0);
+}}
+
+function treeCigarReorderEnd(event) {{
+  event.currentTarget.style.opacity = '';
+  event.currentTarget.draggable = false;
+  clearTreeCigarIndicators();
+  dragTreeCigarId = null; dragTreeCigarCat = null;
+}}
+
+function clearTreeCigarIndicators() {{
+  document.querySelectorAll('.tree-cigar.drop-before,.tree-cigar.drop-after')
+    .forEach(el => el.classList.remove('drop-before','drop-after'));
+}}
+
+// 拖入叶节点（tree-cigar 行）→ 分配到该 cigar 所属的同一 category（右面板拖入）
+// 或在树内上下排序（dragTreeCigarId 设置时）
+function treeCigarDragOver(catId, event) {{
+  if (dragTreeCigarId !== null) {{
+    event.preventDefault(); event.stopPropagation();
+    clearTreeCigarIndicators();
+    const half = event.currentTarget.getBoundingClientRect().height / 2;
+    const pos  = (event.clientY - event.currentTarget.getBoundingClientRect().top) < half ? 'before' : 'after';
+    event.currentTarget.classList.add('drop-' + pos);
+    return;
+  }}
+  if (dragCigarId === null && dragUnmatchedId === null) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.dataTransfer.dropEffect = 'move';
+  clearDropIndicators();
+  event.currentTarget.classList.add('highlighted');
+}}
+
+function treeCigarDragLeave(event) {{
+  event.currentTarget.classList.remove('highlighted','drop-before','drop-after');
+}}
+
+async function treeCigarDrop(catId, event) {{
+  event.stopPropagation();
+
+  // ── 树内排序 ──────────────────────────────────────────────
+  if (dragTreeCigarId !== null) {{
+    const fromId  = dragTreeCigarId;
+    const fromCat = dragTreeCigarCat;
+    dragTreeCigarId = null; dragTreeCigarCat = null;
+
+    const el  = event.currentTarget;
+    const pos = el.classList.contains('drop-before') ? 'before' : 'after';
+    clearTreeCigarIndicators();
+    el.style.opacity = '';
+
+    const targetId = parseInt(el.dataset.cigarId);
+    if (fromId === targetId) return;
+
+    // If cross-category, update the cigar's category first (stage it)
+    if (fromCat !== catId) stageCigarChange(fromId, String(catId));
+
+    // Build new order for this category (use effective catId to reflect pending)
+    const catCigars = cigars
+      .filter(c => effectiveCatId(c) === catId)
+      .sort((a, b) => (a.sort_order||0) - (b.sort_order||0));
+    const fromCigar = cigars.find(c => c.id === fromId);
+    if (!fromCigar) return;
+
+    // Remove from current position (may not be in catCigars if cross-cat)
+    const fromIdx = catCigars.findIndex(c => c.id === fromId);
+    if (fromIdx !== -1) catCigars.splice(fromIdx, 1);
+
+    // Insert before/after target
+    const targetIdx = catCigars.findIndex(c => c.id === targetId);
+    const insertAt  = pos === 'before' ? targetIdx : targetIdx + 1;
+    catCigars.splice(insertAt < 0 ? catCigars.length : insertAt, 0, fromCigar);
+
+    // Persist new sort_order
+    const r = await fetch(`/admin-tools/catalog/api/categories/${{catId}}/reorder`, {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{ cigar_ids: catCigars.map(c => c.id) }}),
+    }});
+    if (!r.ok) {{ showToast('排序保存失败', false); return; }}
+
+    // Update local sort_order so renderTree reflects new order immediately
+    catCigars.forEach((c, i) => {{
+      const obj = cigars.find(x => x.id === c.id);
+      if (obj) obj.sort_order = i;
+    }});
+    renderTree();
+    return;
+  }}
+
+  // ── 右面板拖入 ────────────────────────────────────────────
+  event.currentTarget.classList.remove('highlighted');
+  await catDrop(catId, event);
+}}
+
 function catDragOver(catId, event) {{
-  const isCigarOrUnmatched = (dragCigarId !== null || dragUnmatchedId !== null);
+  const isCigarOrUnmatched = (dragCigarId !== null || dragUnmatchedId !== null || dragTreeCigarId !== null);
   if (isCigarOrUnmatched) {{
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
@@ -546,10 +683,18 @@ async function catDrop(targetCatId, event) {{
 
   clearExpandTimer();
 
-  // ── Cigar → Category drop ──────────────────────────────
+  // ── Cigar (right panel) → Category drop ───────────────
   if (dragCigarId !== null) {{
     stageCigarChange(dragCigarId, String(targetCatId));
     dragCigarId = null;
+    return;
+  }}
+
+  // ── Tree-cigar → Category header drop (cross-cat move) ─
+  if (dragTreeCigarId !== null) {{
+    const cid = dragTreeCigarId;
+    dragTreeCigarId = null; dragTreeCigarCat = null;
+    stageCigarChange(cid, String(targetCatId));
     return;
   }}
 
@@ -633,6 +778,15 @@ function toggleCat(catId, event) {{
   else collapsedCats.add(catId);
   renderTree();
   applyCigarVisibility();
+}}
+
+async function deleteCigar(cigarId, cigarName, event) {{
+  event.stopPropagation();
+  if (!confirm(`确认删除「${{cigarName}}」？将同时删除所有价格记录和别名，无法恢复。`)) return;
+  const r = await fetch(`/admin-tools/catalog/api/cigars/${{cigarId}}`, {{ method: 'DELETE' }});
+  if (!r.ok) {{ showToast('删除失败', false); return; }}
+  showToast('已删除');
+  await loadCigars();
 }}
 
 function scrollToCigar(cigarId) {{
@@ -785,6 +939,86 @@ async function deleteCategory() {{
   await loadCigars();
 }}
 
+// ── Inline rename（双击分类名） ─────────────────────────────────────────────────
+function startInlineRename(id, event) {{
+  event.stopPropagation();
+  const span = event.currentTarget;
+  const cat = categories.find(c => c.id === id);
+  if (!cat) return;
+  const input = document.createElement('input');
+  input.className = 'cat-inline-input';
+  input.value = cat.name;
+  span.replaceWith(input);
+  input.focus(); input.select();
+  let done = false;
+  const finish = async (save) => {{
+    if (done) return; done = true;
+    const newName = input.value.trim();
+    if (save && newName && newName !== cat.name) {{
+      const r = await fetch(`/admin-tools/catalog/api/categories/${{id}}`, {{
+        method: 'PATCH',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{name: newName, parent_id: cat.parent_id, sort_order: cat.sort_order}}),
+      }});
+      if (!r.ok) {{ showToast('保存失败', false); done = false; renderTree(); return; }}
+      await loadCategories(); filterCigars();
+    }} else {{
+      renderTree();
+    }}
+  }};
+  input.addEventListener('keydown', e => {{
+    if (e.key === 'Enter') {{ e.preventDefault(); finish(true); }}
+    if (e.key === 'Escape') {{ finish(false); }}
+  }});
+  input.addEventListener('blur', () => finish(true));
+}}
+
+// ── Inline add child（点 ＋ 按钮） ─────────────────────────────────────────────
+function catDepth(catId) {{
+  let d = 0, cur = categories.find(c => c.id === catId);
+  while (cur?.parent_id) {{ d++; cur = categories.find(c => c.id === cur.parent_id); }}
+  return d;
+}}
+
+function startInlineAdd(parentId, event) {{
+  event.stopPropagation();
+  document.getElementById('inline-add-row')?.remove();
+  const treeItem = event.currentTarget.closest('.tree-item');
+  if (!treeItem) return;
+  const indent = (catDepth(parentId) + 1) * 20 + 22;
+  const row = document.createElement('div');
+  row.id = 'inline-add-row';
+  row.className = 'inline-add-row';
+  row.style.paddingLeft = indent + 'px';
+  row.innerHTML = `<span style="color:#22c55e;font-size:13px;font-weight:700">＋</span>
+    <input id="inline-add-input" class="cat-inline-input" placeholder="新子分类名…" style="width:150px">
+    <span class="inline-add-hint">Enter 确认 · Esc 取消</span>`;
+  treeItem.insertAdjacentElement('afterend', row);
+  const input = document.getElementById('inline-add-input');
+  input.focus();
+  let done = false;
+  input.addEventListener('keydown', async e => {{
+    if (e.key === 'Enter') {{
+      e.preventDefault();
+      if (done) return; done = true;
+      const name = input.value.trim();
+      if (!name) {{ row.remove(); return; }}
+      const sortOrder = categories.filter(c => c.parent_id === parentId).length;
+      const r = await fetch(`/admin-tools/catalog/api/brands/${{currentBrandId}}/categories`, {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{name, parent_id: parentId, sort_order: sortOrder}}),
+      }});
+      row.remove();
+      if (!r.ok) {{ showToast('创建失败', false); return; }}
+      collapsedCats.delete(parentId);
+      await loadCategories(); filterCigars();
+    }}
+    if (e.key === 'Escape') {{ row.remove(); }}
+  }});
+  input.addEventListener('blur', () => {{ if (!done) setTimeout(() => row.remove(), 120); }});
+}}
+
 // ── Cigars ────────────────────────────────────────────────────────────────────
 async function loadCigars() {{
   const r = await fetch(`/admin-tools/catalog/api/brands/${{currentBrandId}}/cigars`);
@@ -849,10 +1083,10 @@ function renderCigars(list, catMap) {{
         title="点击编辑长度/环径">${{specText}} <span class="edit-hint">✎</span></div>`;
 
     return `<div class="cigar-row${{isPending ? ' pending' : ''}}" id="cr-${{c.id}}"
-      draggable="true"
+      draggable="false"
       ondragstart="cigarDragStart(${{c.id}},event)"
-      ondragend="cigarDragEnd(event)">
-      <span class="drag-handle" title="拖至左侧分类">⠿</span>
+      ondragend="cigarDragEnd(event);this.draggable=false">
+      <span class="drag-handle" title="拖至左侧分类" onmousedown="this.parentElement.draggable=true">⠿</span>
       <div class="cigar-name">
         <div class="cn">${{c.name}}</div>
         ${{specsLine}}
@@ -862,6 +1096,7 @@ function renderCigars(list, catMap) {{
       <select class="cat-select" id="sel-${{c.id}}" onchange="stageCigarChange(${{c.id}}, this.value)">
         ${{selOpts}}
       </select>
+      <span class="cigar-del-btn" onclick="deleteCigar(${{c.id}}, '${{c.name.replace(/'/g,"\\'")}}', event)" title="删除雪茄">🗑</span>
     </div>`;
   }}).join('');
   applyCigarVisibility();
@@ -1075,10 +1310,10 @@ function renderUnmatched(list) {{
       : `<span class="src-icon" style="opacity:.45;margin-right:4px">${{u.source_slug.slice(0,4).toUpperCase()}}</span>`;
     const catOpts = buildCatSelectOpts(null);
     return `<div class="cigar-row" id="um-${{u.id}}" style="align-items:flex-start;flex-wrap:wrap;gap:6px"
-      draggable="true"
+      draggable="false"
       ondragstart="unmatchedDragStart(${{u.id}},event)"
-      ondragend="unmatchedDragEnd(event)">
-      <span class="drag-handle" title="拖至左侧分类">⠿</span>
+      ondragend="unmatchedDragEnd(event);this.draggable=false">
+      <span class="drag-handle" title="拖至左侧分类" onmousedown="this.parentElement.draggable=true">⠿</span>
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:6px">
           ${{linkIcon}}
@@ -1203,7 +1438,7 @@ async def get_cigars(brand_id: int, request: Request):
             select(Cigar, Series)
             .join(Series, Cigar.series_id == Series.id)
             .where(Series.brand_id == brand_id)
-            .order_by(Series.name, Cigar.name)
+            .order_by(Cigar.sort_order, Cigar.name)
         )
         rows = cigars_r.all()
 
@@ -1244,6 +1479,7 @@ async def get_cigars(brand_id: int, request: Request):
             "length_mm":   c.length_mm,
             "ring_gauge":  c.ring_gauge,
             "category_id": c.category_id,
+            "sort_order":  c.sort_order,
             "sources":     cigar_sources.get(c.id, []),
         }
         for c, _ in rows
@@ -1372,6 +1608,42 @@ async def update_cigar_specs(cigar_id: int, request: Request):
     return {"ok": True}
 
 
+@router.delete("/api/cigars/{cigar_id}")
+async def delete_cigar(cigar_id: int, request: Request):
+    """删除雪茄及其所有价格记录和别名（仅管理员）"""
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(Cigar).where(Cigar.id == cigar_id))
+        cigar = r.scalar_one_or_none()
+        if not cigar:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        # Delete associated prices, price history, aliases
+        await db.execute(_sql("DELETE FROM prices WHERE cigar_id = :cid"), {"cid": cigar_id})
+        await db.execute(_sql("DELETE FROM price_history WHERE cigar_id = :cid"), {"cid": cigar_id})
+        await db.execute(_sql("DELETE FROM scraper_name_aliases WHERE cigar_id = :cid"), {"cid": cigar_id})
+        await db.delete(cigar)
+        await db.commit()
+    return {"ok": True}
+
+
+@router.post("/api/categories/{cat_id}/reorder")
+async def reorder_cigars(cat_id: int, request: Request):
+    """按传入的 cigar_ids 顺序更新各雪茄的 sort_order"""
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    data = await request.json()
+    cigar_ids: list[int] = data.get("cigar_ids", [])
+    async with AsyncSessionLocal() as db:
+        for i, cid in enumerate(cigar_ids):
+            r = await db.execute(select(Cigar).where(Cigar.id == cid))
+            cigar = r.scalar_one_or_none()
+            if cigar:
+                cigar.sort_order = i
+        await db.commit()
+    return {"ok": True}
+
+
 @router.post("/api/unmatched/{item_id}/quick-create")
 async def quick_create_from_unmatched(item_id: int, request: Request):
     """
@@ -1428,34 +1700,51 @@ async def quick_create_from_unmatched(item_id: int, request: Request):
                 return JSONResponse({"error": "no series found for brand"}, status_code=400)
             series_id = sr_obj.id
 
-        # Build unique slug for cigar
-        base_slug = _slugify(item.raw_name)[:120]
-        slug = base_slug
-        i = 2
-        while True:
-            exists = await db.execute(select(Cigar).where(Cigar.slug == slug))
-            if not exists.scalar_one_or_none():
-                break
-            slug = f"{base_slug}-{i}"
-            i += 1
-
-        # Create cigar
-        vitola     = data.get("vitola")     or None
-        length_mm  = data.get("length_mm")  or None
-        ring_gauge = data.get("ring_gauge") or None
-        cigar = Cigar(
-            name=item.raw_name,
-            slug=slug,
-            series_id=series_id,
-            category_id=category_id,
-            vitola=vitola,
-            length_mm=float(length_mm)  if length_mm  is not None else None,
-            ring_gauge=float(ring_gauge) if ring_gauge is not None else None,
+        # ── 查重：同品牌下是否已存在同名雪茄 ────────────────────────
+        existing_r = await db.execute(
+            select(Cigar)
+            .join(Series, Cigar.series_id == Series.id)
+            .where(
+                Series.brand_id == cat.brand_id,
+                func.lower(Cigar.name) == func.lower(item.raw_name),
+            )
+            .limit(1)
         )
-        db.add(cigar)
-        await db.flush()  # get cigar.id
+        existing_cigar = existing_r.scalar_one_or_none()
 
-        # Create alias (skip if duplicate)
+        if existing_cigar:
+            # 已存在同名雪茄 → 复用，只补全 category_id（若未设置）
+            cigar = existing_cigar
+            if not cigar.category_id:
+                cigar.category_id = category_id
+            is_new = False
+        else:
+            # 全新雪茄 → 生成唯一 slug 并创建
+            vitola     = data.get("vitola")     or None
+            length_mm  = data.get("length_mm")  or None
+            ring_gauge = data.get("ring_gauge") or None
+            base_slug = _slugify(item.raw_name)[:120]
+            slug = base_slug
+            i = 2
+            while True:
+                chk = await db.execute(select(Cigar).where(Cigar.slug == slug))
+                if not chk.scalar_one_or_none():
+                    break
+                slug = f"{base_slug}-{i}"; i += 1
+            cigar = Cigar(
+                name=item.raw_name,
+                slug=slug,
+                series_id=series_id,
+                category_id=category_id,
+                vitola=vitola,
+                length_mm=float(length_mm)  if length_mm  is not None else None,
+                ring_gauge=float(ring_gauge) if ring_gauge is not None else None,
+            )
+            db.add(cigar)
+            is_new = True
+        await db.flush()  # ensure cigar.id is available
+
+        # ── 建立当前条目的 alias ──────────────────────────────────
         dup = await db.execute(
             select(ScraperNameAlias).where(
                 ScraperNameAlias.source_slug == item.source_slug,
@@ -1463,12 +1752,37 @@ async def quick_create_from_unmatched(item_id: int, request: Request):
             )
         )
         if not dup.scalar_one_or_none():
-            alias = ScraperNameAlias(
+            db.add(ScraperNameAlias(
                 source_slug=item.source_slug,
                 raw_name=item.raw_name,
                 cigar_id=cigar.id,
+            ))
+
+        # ── 扫描同来源未匹配条目，批量为相似名称建 alias ──────────
+        others_r = await db.execute(
+            select(UnmatchedItem).where(
+                UnmatchedItem.source_slug == item.source_slug,
+                UnmatchedItem.id != item.id,
             )
-            db.add(alias)
+        )
+        others = others_r.scalars().all()
+        auto_count = 0
+        for other in others:
+            if similarity(other.raw_name, item.raw_name) > 0.75:
+                dup2 = await db.execute(
+                    select(ScraperNameAlias).where(
+                        ScraperNameAlias.source_slug == other.source_slug,
+                        ScraperNameAlias.raw_name   == other.raw_name,
+                    )
+                )
+                if not dup2.scalar_one_or_none():
+                    db.add(ScraperNameAlias(
+                        source_slug=other.source_slug,
+                        raw_name=other.raw_name,
+                        cigar_id=cigar.id,
+                    ))
+                await db.delete(other)
+                auto_count += 1
 
         # Write price data from the unmatched item into prices table
         if item.price_single is not None or item.price_box is not None:
@@ -1519,4 +1833,9 @@ async def quick_create_from_unmatched(item_id: int, request: Request):
         await db.delete(item)
         await db.commit()
 
-    return {"ok": True, "cigar_id": cigar.id, "cigar_slug": slug}
+    return {
+        "ok": True,
+        "cigar_id": cigar.id,
+        "is_new": is_new,
+        "auto_matched": auto_count,
+    }
