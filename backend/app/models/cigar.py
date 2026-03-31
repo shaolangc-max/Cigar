@@ -13,6 +13,7 @@ class Cigar(Base):
     edition_type: reserva / gran_reserva / edicion_limitada / regional / aniversario / lcdh / None
     edition: 显示用标签，如 "Cosecha 2014" / "Edición Limitada 2021"
     parent_cigar_id: 指向标准版 cigar.id，标准版本身为 None
+    category_id: 纯展示分类，指向 categories.id（可空）；与爬虫完全隔离
     """
     __tablename__ = "cigars"
 
@@ -27,8 +28,10 @@ class Cigar(Base):
     edition_type:     Mapped[Optional[str]]  = mapped_column(String(50), nullable=True)
     edition:          Mapped[Optional[str]]  = mapped_column(String(200), nullable=True)
     parent_cigar_id:  Mapped[Optional[int]]  = mapped_column(ForeignKey("cigars.id"), nullable=True, index=True)
+    category_id:      Mapped[Optional[int]]  = mapped_column(ForeignKey("categories.id"), nullable=True, index=True)
 
-    series:   Mapped["Series"]        = relationship(back_populates="cigars")
-    prices:   Mapped[list["Price"]]   = relationship(back_populates="cigar")
-    versions: Mapped[list["Cigar"]]   = relationship("Cigar", foreign_keys=[parent_cigar_id],
-                                                      primaryjoin="Cigar.parent_cigar_id == Cigar.id")
+    series:    Mapped["Series"]        = relationship(back_populates="cigars")
+    prices:    Mapped[list["Price"]]   = relationship(back_populates="cigar")
+    versions:  Mapped[list["Cigar"]]   = relationship("Cigar", foreign_keys=[parent_cigar_id],
+                                                       primaryjoin="Cigar.parent_cigar_id == Cigar.id")
+    category:  Mapped[Optional["Category"]] = relationship(back_populates="cigars")

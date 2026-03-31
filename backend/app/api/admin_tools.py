@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app.db import AsyncSessionLocal
 from app.models.alias import ScraperNameAlias
 from app.models.brand import Brand
+from app.models.category import Category
 from app.models.cigar import Cigar
 from app.models.scraper_run import UnmatchedItem
 from app.models.series import Series
@@ -104,6 +105,27 @@ async def match_form(unmatched_id: int, request: Request):
         series_result = await db.execute(select(Series).order_by(Series.name))
         all_series = series_result.scalars().all()
 
+        categories_result = await db.execute(
+            select(Category).order_by(Category.sort_order, Category.id)
+        )
+        all_categories = categories_result.scalars().all()
+
+        # Build category_id → dominant series_id mapping (via cigar.category_id)
+        # For each catalog category, find which series most of its cigars belong to
+        from sqlalchemy import text as _sql
+        cat_series_rows = await db.execute(_sql("""
+            SELECT category_id, series_id, COUNT(*) as cnt
+            FROM cigars
+            WHERE category_id IS NOT NULL
+            GROUP BY category_id, series_id
+            ORDER BY category_id, cnt DESC
+        """))
+        cat_series_map: dict[int, int] = {}
+        for row in cat_series_rows:
+            cid, sid = row[0], row[1]
+            if cid not in cat_series_map:   # keep first = most common
+                cat_series_map[cid] = sid
+
         existing_result = await db.execute(
             select(ScraperNameAlias).where(
                 ScraperNameAlias.source_slug == item.source_slug,
@@ -134,8 +156,14 @@ async def match_form(unmatched_id: int, request: Request):
         [{"id": b.id, "name": b.name} for b in all_brands]
     )
     series_json = json.dumps(
-        [{"id": s.id, "name": s.name, "brand_id": s.brand_id} for s in all_series]
+        [{"id": s.id, "name": s.name, "brand_id": s.brand_id, "slug": s.slug} for s in all_series]
     )
+    categories_json = json.dumps([
+        {"id": c.id, "brand_id": c.brand_id, "parent_id": c.parent_id,
+         "name": c.name, "sort_order": c.sort_order}
+        for c in all_categories
+    ])
+    cat_series_json = json.dumps(cat_series_map)   # category_id → dominant series_id
     cigars_json = json.dumps(
         [{"id": c.id, "name": c.name, "series_id": c.series_id,
           "vitola": c.vitola, "length_mm": c.length_mm, "ring_gauge": c.ring_gauge}
@@ -232,6 +260,7 @@ async def match_form(unmatched_id: int, request: Request):
     <input type="hidden" name="unmatched_id" value="{item.id}">
     <input type="hidden" name="source_slug" value="{item.source_slug}">
     <input type="hidden" name="raw_name" value="{item.raw_name}">
+    <input type="hidden" name="category_id" id="inp-category-id" value="">
 
     <div class="field">
       <label class="lbl">品牌 *</label>
@@ -245,13 +274,24 @@ async def match_form(unmatched_id: int, request: Request):
     </div>
 
     <div class="field">
-      <label class="lbl">系列 *</label>
+      <label class="lbl">分类（从 Catalog 目录选择）</label>
+      <div id="cat-tree-sel" style="border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;
+           max-height:220px;overflow-y:auto;background:#fafafa;font-size:14px">
+        <span style="color:#9ca3af">先选品牌</span>
+      </div>
+      <div id="cat-path-display" style="margin-top:6px;font-size:12px;color:#0071e3;display:none">
+        ✓ 已选：<span id="cat-path-text"></span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="lbl">系列（自动匹配，可覆盖）</label>
       <select id="sel-series" name="series_id" style="margin-bottom:6px" onchange="onSeriesChange()">
-        <option value="">— 先选品牌 —</option>
+        <option value="">— 先选分类 —</option>
       </select>
       <div class="or-divider">或</div>
       <input type="text" name="series_name" id="inp-series-name" placeholder="新系列名（填写后忽略上方选择）">
-      <p class="hint">填写新系列名则自动建立系列，留空则使用上方选择</p>
+      <p class="hint">选择分类后自动推荐系列，也可手动选择或填写新系列名</p>
     </div>
 
     <div class="field">
@@ -356,9 +396,11 @@ document.querySelectorAll('.et-radio').forEach(function(radio) {{
 </div>
 
 <script>
-const ALL_BRANDS = {brands_json};
-const ALL_SERIES = {series_json};
-const ALL_CIGARS = {cigars_json};
+const ALL_BRANDS     = {brands_json};
+const ALL_SERIES     = {series_json};
+const ALL_CIGARS     = {cigars_json};
+const ALL_CATEGORIES = {categories_json};
+const CAT_SERIES_MAP = {cat_series_json};  // category_id → dominant series_id
 
 function switchTab(name) {{
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', (name==='existing'&&i===0)||(name==='create'&&i===1)));
@@ -380,21 +422,94 @@ function filterExisting(q) {{
   }});
 }}
 
-// 品牌切换 → 更新系列下拉 + 父雪茄下拉
+// 品牌切换 → 构建 catalog 分类树选择器 + 填充系列下拉（备用）
 function onBrandChange() {{
-  const brandId = parseInt(document.getElementById('sel-brand').value);
-  const seriesSel = document.getElementById('sel-series');
-  seriesSel.innerHTML = '<option value="">— 选择已有系列 —</option>';
-  if (!brandId) {{ updateParentCigars(null); return; }}
-  ALL_SERIES.filter(s => s.brand_id === brandId).forEach(s => {{
-    const opt = document.createElement('option');
-    opt.value = s.id; opt.text = s.name;
-    seriesSel.appendChild(opt);
-  }});
-  updateParentCigars(null); // 品牌切换时先清空父雪茄，等用户选系列
+  const brandId  = parseInt(document.getElementById('sel-brand').value);
+  const brandCats = ALL_CATEGORIES.filter(c => c.brand_id === brandId);
+  const brandSeries = ALL_SERIES.filter(s => s.brand_id === brandId);
+
+  // Reset
+  document.getElementById('inp-category-id').value = '';
+  document.getElementById('cat-path-display').style.display = 'none';
+  buildSeriesSelect(brandSeries);   // populate series dropdown (backup)
+
+  // Build category tree widget
+  const container = document.getElementById('cat-tree-sel');
+  if (!brandId || !brandCats.length) {{
+    container.innerHTML = '<span style="color:#9ca3af">' + (!brandId ? '先选品牌' : '该品牌暂无分类，请先在 Catalog 管理页建立') + '</span>';
+    updateParentCigars(null);
+    return;
+  }}
+  container.innerHTML = buildCatTreeHtml(null, brandCats, 0);
+  updateParentCigars(null);
 }}
 
-// 系列切换 → 更新父雪茄下拉
+function buildCatTreeHtml(parentId, brandCats, depth) {{
+  const kids = brandCats
+    .filter(c => (c.parent_id ?? null) === parentId)
+    .sort((a, b) => a.sort_order - b.sort_order);
+  if (!kids.length) return '';
+  return kids.map(c => {{
+    const children = buildCatTreeHtml(c.id, brandCats, depth + 1);
+    const hasChildren = brandCats.some(x => x.parent_id === c.id);
+    const indent = depth * 16;
+    return `<div style="margin-left:${{indent}}px">
+      <div class="cat-row" data-cat-id="${{c.id}}" onclick="onCatSelect(${{c.id}})"
+           style="padding:5px 8px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:6px">
+        <span style="font-size:12px;color:#94a3b8">${{hasChildren ? '▸' : '◦'}}</span>
+        <span style="font-size:14px">${{c.name}}</span>
+      </div>
+      ${{children}}
+    </div>`;
+  }}).join('');
+}}
+
+// 用户点击 catalog 分类 → 设置 category_id + 自动推荐系列
+function onCatSelect(catId) {{
+  // Highlight selected row
+  document.querySelectorAll('.cat-row').forEach(el => {{
+    el.style.background = el.dataset.catId == catId ? '#dbeafe' : '';
+    el.style.fontWeight = el.dataset.catId == catId ? '600' : '';
+  }});
+
+  document.getElementById('inp-category-id').value = catId;
+
+  // Build breadcrumb path
+  const path = [];
+  let cur = ALL_CATEGORIES.find(c => c.id === catId);
+  while (cur) {{
+    path.unshift(cur.name);
+    cur = cur.parent_id ? ALL_CATEGORIES.find(c => c.id === cur.parent_id) : null;
+  }}
+  document.getElementById('cat-path-text').textContent = path.join(' › ');
+  document.getElementById('cat-path-display').style.display = '';
+
+  // Auto-select dominant series for this category
+  const domSeriesId = CAT_SERIES_MAP[String(catId)];
+  const sel = document.getElementById('sel-series');
+  if (domSeriesId) {{
+    sel.value = String(domSeriesId);
+    updateParentCigars(domSeriesId);
+  }} else {{
+    sel.value = '';
+    updateParentCigars(null);
+  }}
+}}
+
+function buildSeriesSelect(brandSeries) {{
+  const sel = document.getElementById('sel-series');
+  sel.innerHTML = '<option value="">— 自动 / 手动选择 —</option>';
+  brandSeries.forEach(s => {{
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    const hint = s.slug.replace(/^[a-z0-9]+-/, '');
+    opt.text = hint && hint !== s.name.toLowerCase().replace(/\s+/g,'-')
+      ? s.name + '  [' + hint + ']' : s.name;
+    sel.appendChild(opt);
+  }});
+}}
+
+// 系列手动切换 → 更新父雪茄下拉（不覆盖已选分类）
 function onSeriesChange() {{
   const seriesId = parseInt(document.getElementById('sel-series').value) || null;
   updateParentCigars(seriesId);
@@ -484,6 +599,7 @@ async def match_submit(
     edition_type: Optional[str] = Form(None),
     edition: Optional[str] = Form(None),
     parent_cigar_id: Optional[str] = Form(None),
+    category_id: Optional[str] = Form(None),
 ):
     if not _require_admin(request):
         return RedirectResponse("/admin/login")
@@ -534,6 +650,8 @@ async def match_submit(
                 et, el = detect_edition(cigar_name)
             pid = int(parent_cigar_id) if parent_cigar_id and parent_cigar_id.strip() else None
 
+            cat_id = int(category_id) if category_id and category_id.strip() else None
+
             new_cigar = Cigar(
                 series_id=series.id,
                 name=cigar_name,
@@ -544,6 +662,7 @@ async def match_submit(
                 edition_type=et,
                 edition=el,
                 parent_cigar_id=pid,
+                category_id=cat_id,
             )
             db.add(new_cigar)
             await db.flush()  # 获取 new_cigar.id

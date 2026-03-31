@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import func, select
 
-from app.api import brands, cigars, prices, admin, auth, billing, alerts, scraper_admin, admin_tools
+from app.api import brands, cigars, prices, admin, auth, billing, alerts, scraper_admin, admin_tools, catalog_admin
 from app.admin import create_admin
 from app.config import settings
 from app.db import AsyncSessionLocal
@@ -76,6 +76,7 @@ app.include_router(admin.router,  prefix="/api/v1")
 app.include_router(alerts.router, prefix="/api/v1")
 app.include_router(scraper_admin.router, prefix="/api/v1")
 app.include_router(admin_tools.router)
+app.include_router(catalog_admin.router)
 
 
 @app.get("/api/v1/health")

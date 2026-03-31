@@ -84,12 +84,13 @@ export interface SeriesGroup {
   cigars: CigarSummary[];
 }
 
-export interface BrandCategory {
+export interface CategoryNode {
   id: number;
   name: string;
   slug: string;
   sort_order: number;
-  series: SeriesGroup[];
+  children: CategoryNode[];   // sub-categories
+  cigars: CigarSummary[];     // cigars directly in this category
 }
 
 export interface BrandDetail {
@@ -98,8 +99,8 @@ export interface BrandDetail {
   slug: string;
   country: string | null;
   image_url: string | null;
-  categories: BrandCategory[];   // 有分类的系列（分组）
-  series: SeriesGroup[];          // 未分类的系列（平铺）
+  category_tree: CategoryNode[];  // recursive category tree with cigars
+  series: SeriesGroup[];          // cigars not yet assigned to any category
 }
 
 // ── Fetch helpers ─────────────────────────────────────────────────────────

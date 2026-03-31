@@ -3,7 +3,7 @@ import Image from "next/image";
 import { existsSync } from "fs";
 import { join } from "path";
 import { notFound } from "next/navigation";
-import { api, BrandDetail, SeriesGroup } from "@/lib/api";
+import { api, BrandDetail, CategoryNode, SeriesGroup } from "@/lib/api";
 
 export const revalidate = 300;
 
@@ -16,10 +16,12 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
     notFound();
   }
 
-  const totalCigars = [
-    ...brand.categories.flatMap(c => c.series),
-    ...brand.series,
-  ].reduce((s, sr) => s + sr.cigars.length, 0);
+  const countCigars = (node: CategoryNode): number =>
+    node.cigars.length + node.children.reduce((s, c) => s + countCigars(c), 0);
+
+  const totalCigars =
+    brand.category_tree.reduce((s, n) => s + countCigars(n), 0) +
+    brand.series.reduce((s, sr) => s + sr.cigars.length, 0);
 
   const hasLogo = existsSync(join(process.cwd(), "public", "brands", `${slug}.jpg`));
 
@@ -57,34 +59,54 @@ export default async function BrandPage({ params }: { params: Promise<{ slug: st
         </div>
       </div>
 
-      {/* 有分类的系列 */}
-      {brand.categories.map((cat) => (
-        <div key={cat.id}>
-          {/* 大类标题 */}
-          <div style={{
-            fontSize: 13, fontWeight: 700, color: "var(--apple-label)",
-            letterSpacing: "0.01em", margin: "0 0 16px 2px",
-            paddingBottom: 8,
-            borderBottom: "2px solid var(--apple-label)",
-            display: "inline-block",
-          }}>
-            {cat.name}
-          </div>
-
-          {/* 大类下的各系列 */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            {cat.series.map((sr) => (
-              <SeriesBlock key={sr.id} series={sr} />
-            ))}
-          </div>
-        </div>
+      {/* Category tree */}
+      {brand.category_tree.map((node) => (
+        <CategorySection key={node.id} node={node} depth={0} />
       ))}
 
-      {/* 未分类的系列（平铺） */}
+      {/* Uncategorized series (flat) */}
       {brand.series.map((sr) => (
         <SeriesBlock key={sr.id} series={sr} />
       ))}
 
+    </div>
+  );
+}
+
+function CategorySection({ node, depth }: { node: CategoryNode; depth: number }) {
+  const isTop = depth === 0;
+  return (
+    <div>
+      {/* Category heading */}
+      <div style={{
+        fontSize: isTop ? 13 : 12,
+        fontWeight: 700,
+        color: "var(--apple-label)",
+        letterSpacing: "0.01em",
+        margin: isTop ? "0 0 16px 2px" : "0 0 12px 2px",
+        paddingBottom: 8,
+        borderBottom: isTop ? "2px solid var(--apple-label)" : "1px solid var(--apple-separator)",
+        display: "inline-block",
+        marginLeft: depth * 20,
+      }}>
+        {node.name}
+      </div>
+
+      {/* Cigars directly in this category */}
+      {node.cigars.length > 0 && (
+        <div style={{ marginLeft: (depth + 1) * 20, marginBottom: 20 }}>
+          <CigarList cigars={node.cigars} />
+        </div>
+      )}
+
+      {/* Sub-categories */}
+      {node.children.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20, marginLeft: depth * 20 }}>
+          {node.children.map((child) => (
+            <CategorySection key={child.id} node={child} depth={depth + 1} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -99,47 +121,53 @@ function SeriesBlock({ series: sr }: { series: SeriesGroup }) {
       }}>
         {sr.name}
       </p>
-      <div style={{
-        borderRadius: 16,
-        border: "1px solid var(--apple-border)",
-        backgroundColor: "var(--apple-surface)",
-        overflow: "hidden",
-        boxShadow: "0 1px 6px rgba(0,0,0,0.04)",
-      }}>
-        {sr.cigars.map((c, i) => (
-          <Link
-            key={c.slug}
-            href={`/cigar/${c.slug}`}
-            className="apple-row-link"
-            style={{
-              padding: "14px 20px",
-              borderTop: i === 0 ? "none" : "1px solid var(--apple-separator)",
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 500, fontSize: 15, color: "var(--apple-label)" }}>{c.name}</div>
-              {c.vitola && (
-                <div style={{ fontSize: 12, color: "var(--apple-tertiary)", marginTop: 2 }}>{c.vitola}</div>
-              )}
-            </div>
-            <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 16 }}>
-              {c.min_price_single != null && (
-                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--apple-label)" }}>
-                  单支 {c.currency} {c.min_price_single.toFixed(2)} 起
-                </div>
-              )}
-              {c.min_price_box != null && (
-                <div style={{ fontSize: 12, color: "var(--apple-secondary)", marginTop: 2 }}>
-                  盒 {c.currency} {c.min_price_box.toFixed(2)} 起
-                </div>
-              )}
-              {c.min_price_single == null && c.min_price_box == null && (
-                <span style={{ fontSize: 13, color: "var(--apple-tertiary)" }}>暂无报价</span>
-              )}
-            </div>
-          </Link>
-        ))}
-      </div>
+      <CigarList cigars={sr.cigars} />
+    </div>
+  );
+}
+
+function CigarList({ cigars }: { cigars: import("@/lib/api").CigarSummary[] }) {
+  return (
+    <div style={{
+      borderRadius: 16,
+      border: "1px solid var(--apple-border)",
+      backgroundColor: "var(--apple-surface)",
+      overflow: "hidden",
+      boxShadow: "0 1px 6px rgba(0,0,0,0.04)",
+    }}>
+      {cigars.map((c, i) => (
+        <Link
+          key={c.slug}
+          href={`/cigar/${c.slug}`}
+          className="apple-row-link"
+          style={{
+            padding: "14px 20px",
+            borderTop: i === 0 ? "none" : "1px solid var(--apple-separator)",
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 500, fontSize: 15, color: "var(--apple-label)" }}>{c.name}</div>
+            {c.vitola && (
+              <div style={{ fontSize: 12, color: "var(--apple-tertiary)", marginTop: 2 }}>{c.vitola}</div>
+            )}
+          </div>
+          <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 16 }}>
+            {c.min_price_single != null && (
+              <div style={{ fontSize: 14, fontWeight: 500, color: "var(--apple-label)" }}>
+                单支 {c.currency} {c.min_price_single.toFixed(2)} 起
+              </div>
+            )}
+            {c.min_price_box != null && (
+              <div style={{ fontSize: 12, color: "var(--apple-secondary)", marginTop: 2 }}>
+                盒 {c.currency} {c.min_price_box.toFixed(2)} 起
+              </div>
+            )}
+            {c.min_price_single == null && c.min_price_box == null && (
+              <span style={{ fontSize: 13, color: "var(--apple-tertiary)" }}>暂无报价</span>
+            )}
+          </div>
+        </Link>
+      ))}
     </div>
   );
 }
