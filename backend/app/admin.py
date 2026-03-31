@@ -138,12 +138,7 @@ class UnmatchedItemAdmin(ModelView, model=UnmatchedItem):
         "product_url": lambda m, a: Markup(
             f'<a href="{m.product_url}" target="_blank" rel="noopener">🔗 打开</a>'
         ) if m.product_url else "",
-        "raw_name": lambda m, a: Markup(
-            f'{m.raw_name}&nbsp;&nbsp;'
-            f'<a href="/admin-tools/match/{m.id}" target="_blank" '
-            f'style="font-size:12px;padding:2px 8px;background:#3b82f6;color:#fff;'
-            f'border-radius:4px;text-decoration:none;">创建匹配</a>'
-        ),
+        "raw_name": lambda m, a: Markup(m.raw_name),
         "trigger_btn": lambda m, a: Markup(f"""
 <button class="btn btn-sm btn-outline-primary"
         onclick="triggerOne('{m.source_slug}',this)">⚡ 触发</button>
