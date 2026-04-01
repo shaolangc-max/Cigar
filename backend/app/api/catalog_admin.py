@@ -439,6 +439,9 @@ async function loadBrand(value, brandName) {{
 async function loadCategories() {{
   const r = await fetch(`/admin-tools/catalog/api/brands/${{currentBrandId}}/categories`);
   categories = await r.json();
+  // Default: collapse all non-leaf categories (those that are a parent of another)
+  const parentIds = new Set(categories.map(c => c.parent_id).filter(id => id != null));
+  collapsedCats = new Set(parentIds);
   renderTree();
   renderParentSelect();
   populateCategoryFilter();
