@@ -1516,16 +1516,27 @@ function renderUnmatched(list) {{
   }}
 }}
 
+const _umCreating = new Set();  // 防止同一条目并发提交
+
 async function quickCreateFromUnmatched(unmatchedId, catId, selectEl) {{
   if (!catId) return;
-  if (!confirm('将自动创建新雪茄并建立别名，确认？')) {{
-    selectEl.value = '';
-    return;
-  }}
+  if (_umCreating.has(unmatchedId)) return;  // 已在处理中，忽略
+
+  _umCreating.add(unmatchedId);
   selectEl.disabled = true;
+
   const vitola     = (document.getElementById(`um-vt-${{unmatchedId}}`)?.value  || '').trim() || null;
   const length_mm  = parseFloat(document.getElementById(`um-len-${{unmatchedId}}`)?.value) || null;
   const ring_gauge = parseFloat(document.getElementById(`um-rg-${{unmatchedId}}`)?.value)  || null;
+
+  function _removeRow() {{
+    const row = document.getElementById(`um-${{unmatchedId}}`);
+    if (row) row.remove();
+    const idx = unmatched.findIndex(x => x.id === unmatchedId);
+    if (idx !== -1) unmatched.splice(idx, 1);
+    document.getElementById('tc-unmatched').textContent = unmatched.length;
+  }}
+
   try {{
     const r = await fetch(`/admin-tools/catalog/api/unmatched/${{unmatchedId}}/quick-create`, {{
       method: 'POST',
@@ -1533,24 +1544,32 @@ async function quickCreateFromUnmatched(unmatchedId, catId, selectEl) {{
       body: JSON.stringify({{category_id: parseInt(catId), vitola, length_mm, ring_gauge}}),
     }});
     const data = await r.json();
-    if (!r.ok) {{
-      alert('创建失败：' + (data.error || r.status));
-      selectEl.disabled = false;
-      selectEl.value = '';
+
+    if (r.status === 404) {{
+      // 已被 batch-match 自动处理，静默移除
+      _removeRow();
+      _umCreating.delete(unmatchedId);
       return;
     }}
-    // Remove the row and update counter
-    const row = document.getElementById(`um-${{unmatchedId}}`);
-    if (row) row.remove();
-    const idx = unmatched.findIndex(x => x.id === unmatchedId);
-    if (idx !== -1) unmatched.splice(idx, 1);
-    document.getElementById('tc-unmatched').textContent = unmatched.length;
-    // Reload cigars so new cigar appears
+    if (!r.ok) {{
+      showToast('创建失败：' + (data.error || r.status), false);
+      selectEl.disabled = false;
+      selectEl.value = '';
+      _umCreating.delete(unmatchedId);
+      return;
+    }}
+    _removeRow();
+    _umCreating.delete(unmatchedId);
     await loadCigars();
+    const msg = data.auto_matched > 0
+      ? `✓ 已创建（自动匹配 ${{data.auto_matched}} 条）`
+      : '✓ 已创建';
+    showToast(msg);
   }} catch(e) {{
-    alert('网络错误：' + e.message);
+    showToast('网络错误：' + e.message, false);
     selectEl.disabled = false;
     selectEl.value = '';
+    _umCreating.delete(unmatchedId);
   }}
 }}
 // ── 未匹配行：品牌切换 → 加载该品牌分类 ─────────────────────────────────────
