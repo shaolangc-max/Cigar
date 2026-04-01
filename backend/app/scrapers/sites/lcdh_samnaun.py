@@ -19,7 +19,14 @@ HEADERS = {
 
 BASE = "https://lcdh-samnaun.ch"
 
-_COUNT_RE    = re.compile(r"(\d+)\s*(?:er|x)?\s*(?:kiste|schachtel|cigars?|stück|box|pack)", re.I)
+_COUNT_RE    = re.compile(
+    r"(\d+)\s*(?:er|x)?\s*(?:kiste|schachtel|cigars?|stück|box|pack|slb|jar)"
+    r"|"
+    r"(?:box|slb|pack|jar|kiste|schachtel)\s+(?:of\s+)?(\d+)",
+    re.I,
+)
+_UNKNOWN_BOX_RE  = re.compile(r"\b(?:vault|tube|estuche)\b", re.I)
+_SKIP_TITLE_RE   = re.compile(r"\b(?:humidor[e]?|cabinet\s+selection)\b", re.I)
 _HANDLE_RE   = re.compile(r"-(\d+)$")
 _KNOWN_SIZES = {3, 5, 10, 12, 15, 20, 25, 40, 50}
 
@@ -38,6 +45,8 @@ def _parse(products: list[dict], source_slug: str) -> list[ScrapedItem]:
     for p in products:
         title       = p.get("title", "")
         handle      = p.get("handle", "")
+        if _SKIP_TITLE_RE.search(title):
+            continue
         product_url = f"{BASE}/products/{handle}"
         variants    = p.get("variants", [])
 
@@ -58,7 +67,7 @@ def _parse(products: list[dict], source_slug: str) -> list[ScrapedItem]:
 
             vt_lower  = vt.lower()
             count_m   = _COUNT_RE.search(vt_lower)
-            count     = int(count_m.group(1)) if count_m else None
+            count     = int(count_m.group(1) or count_m.group(2)) if count_m else None
             is_single = (
                 "einzeln" in vt_lower
                 or "single" in vt_lower
@@ -73,11 +82,23 @@ def _parse(products: list[dict], source_slug: str) -> list[ScrapedItem]:
                 if price_box is None or count > (box_count or 0):
                     price_box = price
                     box_count = count
+            elif _UNKNOWN_BOX_RE.search(vt_lower):
+                pass  # The Vault 等特殊包装，支数未知，跳过不存为单支
             else:
                 if price_single is None:
                     price_single = price
 
-        # 变体标题未能识别数量时，从 handle 回退提取
+        # 变体标题未能识别数量时，从产品名回退（如 "... - 18 cigars"）
+        if box_count is None:
+            title_m = _COUNT_RE.search(title.lower())
+            if title_m:
+                n = int(title_m.group(1) or title_m.group(2))
+                if n > 1:
+                    box_count    = n
+                    price_box    = price_single
+                    price_single = None
+
+        # 仍未知时，从 handle 末尾数字回退
         if box_count is None and price_single is not None:
             n = _count_from_handle(handle)
             if n:

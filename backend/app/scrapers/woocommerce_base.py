@@ -26,7 +26,9 @@ HEADERS = {
 _QTY_RE = re.compile(
     r"(\d+)\s*(?:Stück|Cigars?|er\s*Kiste|er\s*Box|pack|st\.)"
     r"|"
-    r"\((\d+)\)\s*$",   # 末尾括号数量，如 "Product Name (25)"
+    r"\((\d+)\)\s*$"    # 末尾括号数量，如 "Product Name (25)"
+    r"|"
+    r"[Bb]ox\s+of\s+(\d+)",   # "Box of 20"
     re.I,
 )
 
@@ -35,7 +37,7 @@ def _parse_qty(text: str) -> int | None:
     m = _QTY_RE.search(text or "")
     if not m:
         return None
-    return int(m.group(1) or m.group(2))
+    return int(m.group(1) or m.group(2) or m.group(3))
 
 
 def _clean(html: str) -> str:

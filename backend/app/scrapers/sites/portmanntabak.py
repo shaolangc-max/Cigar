@@ -29,6 +29,9 @@ _TITLE_RE    = re.compile(
 _PRICE_RE    = re.compile(r'class="price"[^>]*>\s*([\d.,]+)\s*CHF', re.DOTALL)
 _QTY_RE      = re.compile(r"(\d+)\s*(?:pcs|cigars?|stück|er\s*kiste|box)", re.I)
 _URL_QTY_RE  = re.compile(r"-(\d+)(?:\.html)?$")
+# PrestaShop detail page: description_short 是 HTML 实体编码，如
+# description_short&quot;:&quot;&lt;p&gt;25 Cohiba ...
+_DESC_QTY_RE = re.compile(r'description_short&quot;:&quot;(?:&lt;[^&]*&gt;)?(\d+)\s', re.I)
 _KNOWN_SIZES = {3, 5, 10, 12, 15, 20, 25, 40, 50}
 
 
@@ -101,6 +104,19 @@ class PortmannTabakScraper(BaseScraper):
                     # 名字未匹配到数量时，从 URL 回退提取
                     if box_count is None:
                         box_count = _count_from_url(product_url)
+
+                    # 仍未知时：取详情页，从 PS 嵌入 JS 的 description_short 提取
+                    if box_count is None:
+                        try:
+                            dp = await client.get(product_url)
+                            dm = _DESC_QTY_RE.search(dp.text)
+                            if dm:
+                                n = int(dm.group(1))
+                                if n in _KNOWN_SIZES:
+                                    box_count = n
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.2)
 
                     items.append(ScrapedItem(
                         source_slug  = self.source_slug,

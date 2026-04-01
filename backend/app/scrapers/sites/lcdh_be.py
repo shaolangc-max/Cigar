@@ -8,7 +8,8 @@ from app.scrapers.registry import register
 
 @register
 class LcdhBeScraper(OdooShopScraper):
-    source_slug = "lcdh-be"
-    base_url    = "https://www.lacasadelhabano-dl.be"
-    category_id = 134
-    currency    = "EUR"
+    source_slug               = "lcdh-be"
+    base_url                  = "https://www.lacasadelhabano-dl.be"
+    category_id               = 134
+    currency                  = "EUR"
+    fetch_packaging_variants  = True

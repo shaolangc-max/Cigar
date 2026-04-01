@@ -85,13 +85,15 @@ class CigarsOfCubaScraper(BaseScraper):
                         avail = avail_m.group(1) if avail_m else ""
                         in_stock = "OutOfStock" not in avail
 
-                        # URL 优先（结构化、无歧义），再回退到名称正则
+                        # URL 优先（结构化、无歧义），再回退到名称正则，最后看 article 原文
                         url_qty = re.search(r'(?:box|cabinet|slb|pack)-of-(\d+)', product_url or '', re.I)
                         name_qty = _QTY_RE.search(name)
                         # 名称正则加合理性检查：过滤年份等误匹配（>200 不可能是支数）
                         if name_qty and int(name_qty.group(1)) > 200:
                             name_qty = None
-                        box_count_raw = url_qty or name_qty
+                        # article 里可能有 <option>Box of 20</option> 等选项
+                        art_qty = re.search(r'[Bb]ox\s+of\s+(\d+)', art)
+                        box_count_raw = url_qty or name_qty or art_qty
                         box_count = int(box_count_raw.group(1)) if box_count_raw else None
 
                         items.append(ScrapedItem(

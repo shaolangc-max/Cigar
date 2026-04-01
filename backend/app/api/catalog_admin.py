@@ -159,6 +159,28 @@ async def catalog_page(request: Request):
   .tree-cigar-handle:active {{ cursor: grabbing; }}
   .tree-cigar.drop-before {{ border-top: 2px solid #0071e3; }}
   .tree-cigar.drop-after  {{ border-bottom: 2px solid #0071e3; }}
+  .tree-cigar-toggle {{ width:14px;flex-shrink:0;font-size:10px;color:#aaa;cursor:pointer;text-align:center;user-select:none; }}
+  .tree-cigar-toggle:hover {{ color:#0071e3; }}
+  .tree-source-row {{ display:flex;align-items:center;gap:6px;padding:2px 6px 2px 0;
+                      font-size:12px;color:#555;cursor:pointer;border-radius:4px; }}
+  .tree-source-row:hover {{ background:#f0f4ff;color:#0071e3; }}
+  .tree-source-price {{ font-size:11px;color:#0071e3;flex-shrink:0; }}
+  .tree-source-id {{ font-size:10px;color:#bbb;flex-shrink:0; }}
+  /* 右侧详情面板 */
+  .detail-panel {{ padding:16px;display:none; }}
+  .detail-panel.active {{ display:block; }}
+  .detail-back {{ font-size:13px;color:#0071e3;cursor:pointer;margin-bottom:14px;display:inline-flex;align-items:center;gap:4px; }}
+  .detail-back:hover {{ text-decoration:underline; }}
+  .detail-title {{ font-size:18px;font-weight:700;margin-bottom:4px; }}
+  .detail-meta {{ font-size:13px;color:#888;margin-bottom:16px; }}
+  .detail-section {{ font-size:12px;font-weight:700;color:#aaa;letter-spacing:.06em;text-transform:uppercase;margin:14px 0 8px; }}
+  .detail-price-table {{ width:100%;border-collapse:collapse;font-size:13px; }}
+  .detail-price-table th {{ text-align:left;padding:5px 8px;border-bottom:2px solid #e0e0e5;color:#888;font-weight:600;font-size:11px; }}
+  .detail-price-table td {{ padding:6px 8px;border-bottom:1px solid #f0f0f5; }}
+  .detail-price-table tr:hover td {{ background:#f8f9ff; }}
+  .detail-alias-row {{ font-size:12px;padding:4px 0;border-bottom:1px solid #f5f5f5;display:flex;gap:8px; }}
+  .detail-alias-src {{ color:#0071e3;font-weight:600;flex-shrink:0; }}
+  .in-stock-dot {{ display:inline-block;width:7px;height:7px;border-radius:50%; }}
   .tree-cigar {{ display: flex; align-items: center; padding: 3px 8px 3px 0;
                  font-size: 12px; color: #444; cursor: pointer; border-radius: 6px;
                  transition: background .12s; white-space: nowrap; overflow: hidden;
@@ -198,6 +220,15 @@ async def catalog_page(request: Request):
   .specs-inputs button {{ font-size: 11px; padding: 2px 7px; border-radius: 5px;
                           border: 1px solid #d0d0d5; background: #f5f5f7;
                           cursor: pointer; font-family: inherit; }}
+  .um-link-row {{ display:flex; gap:4px; margin-top:5px; align-items:center; }}
+  .um-link-row input {{ flex:1; min-width:0; font-size:12px; padding:2px 6px;
+                        border:1px solid #d0d0d5; border-radius:5px;
+                        font-family:inherit; outline:none; }}
+  .um-link-row input:focus {{ border-color:#0071e3; }}
+  .um-link-btn {{ font-size:11px; padding:2px 8px; border-radius:5px; white-space:nowrap;
+                  border:1px solid #0071e3; background:#e8f0ff; color:#0071e3;
+                  cursor:pointer; font-family:inherit; flex-shrink:0; }}
+  .um-link-btn:hover {{ background:#0071e3; color:#fff; }}
   .source-links {{ display: flex; gap: 4px; flex-wrap: wrap; }}
   .src-icon {{ display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 5px;
                border-radius: 5px; background: #f0f0f5; color: #555; text-decoration: none;
@@ -303,6 +334,12 @@ async def catalog_page(request: Request):
       </div>
     </div>
 
+    <!-- Cigar detail panel (shown when tree-cigar clicked) -->
+    <div id="pane-detail" class="detail-panel">
+      <div class="detail-back" onclick="closeDetail()">← 返回列表</div>
+      <div id="detail-content"></div>
+    </div>
+
     <!-- Cigar list panel -->
     <div id="pane-cigars">
       <div class="filter-row">
@@ -346,7 +383,8 @@ let cigars      = [];
 let unmatched   = [];
 let pendingChanges = new Map();  // cigar_id → {{oldCatId, newCatId}}
 let activeTab   = 'cigars';
-let collapsedCats = new Set();  // category ids that are collapsed in the tree
+let collapsedCats   = new Set();  // category ids that are collapsed in the tree
+let expandedCigars  = new Set();  // cigar ids expanded in the tree (showing sources)
 
 // ── Toast ──────────────────────────────────────────────────────────────────────
 function showToast(text, ok = true) {{
@@ -438,19 +476,37 @@ function buildTreeHtml(parentId, depth) {{
     const sortedCigars = directCigars.slice().sort((a,b) => (a.sort_order||0)-(b.sort_order||0));
     const cigarListHtml = sortedCigars.map(c2 => {{
       const cigarIndent = 22 + depth * 20;
+      const srcIndent   = cigarIndent + 18;
+      const hasSrc      = c2.sources && c2.sources.length > 0;
+      const isExp       = expandedCigars.has(c2.id);
+      const toggleIcon  = hasSrc ? (isExp ? '▼' : '▶') : '';
+      const sourcesHtml = (hasSrc && isExp) ? c2.sources.map(s => {{
+        const px = s.price_single != null ? `${{s.currency}} ${{s.price_single.toFixed(2)}}` : '';
+        const bx = s.price_box    != null ? `盒${{s.currency}} ${{s.price_box.toFixed(2)}}${{s.box_count ? '/'+s.box_count+'支' : ''}}` : '';
+        const priceStr = [px, bx].filter(Boolean).join(' · ') || '暂无价格';
+        const dot  = `<span class="in-stock-dot" style="background:${{s.in_stock ? '#22c55e' : '#d1d5db'}}"></span>`;
+        const link = s.url ? `<a href="${{s.url}}" target="_blank" style="color:inherit;text-decoration:none" title="打开链接">↗</a>` : '';
+        return `<div class="tree-source-row" style="margin-left:${{srcIndent}}px"
+                     onclick="openDetail(${{c2.id}},event)">
+          ${{dot}}<span style="flex:1;overflow:hidden;text-overflow:ellipsis">${{s.name}}</span>
+          <span class="tree-source-price">${{priceStr}}</span>
+          <span class="tree-source-id">#${{s.price_id}}</span>
+          ${{link}}
+        </div>`;
+      }}).join('') : '';
       return `<div class="tree-cigar" data-cigar-id="${{c2.id}}" data-cat-id="${{c.id}}"
                    style="margin-left:${{cigarIndent}}px" title="${{c2.name}}"
                    draggable="false"
-                   onclick="scrollToCigar(${{c2.id}})"
                    ondragstart="treeCigarReorderStart(${{c2.id}},${{c.id}},event)"
                    ondragend="treeCigarReorderEnd(event)"
                    ondragover="treeCigarDragOver(${{c.id}},event)"
                    ondragleave="treeCigarDragLeave(event)"
                    ondrop="treeCigarDrop(${{c.id}},event)">
           <span class="tree-cigar-handle" onmousedown="this.parentElement.draggable=true" title="拖拽排序">⠿</span>
-          <span class="tree-cigar-dot">·</span>
-          <span style="overflow:hidden;text-overflow:ellipsis">${{c2.name}}</span>
-        </div>`;
+          <span class="tree-cigar-toggle" onclick="toggleCigar(${{c2.id}},event)">${{toggleIcon}}</span>
+          <span style="overflow:hidden;text-overflow:ellipsis;cursor:pointer;flex:1" onclick="openDetail(${{c2.id}},event)">${{c2.name}}</span>
+          <span style="font-size:10px;color:#aaa;flex-shrink:0;margin-left:4px">#${{c2.id}}</span>
+        </div>${{sourcesHtml}}`;
     }}).join('');
     const childHtml = (hasKids && !isCollapsed) ? buildTreeHtml(c.id, depth + 1) : '';
     const nameClick = hasToggle
@@ -789,6 +845,105 @@ async function deleteCigar(cigarId, cigarName, event) {{
   await loadCigars();
 }}
 
+// ── Tree-cigar expand / detail panel ──────────────────────────────────────────
+function toggleCigar(cigarId, event) {{
+  event.stopPropagation();
+  if (expandedCigars.has(cigarId)) expandedCigars.delete(cigarId);
+  else expandedCigars.add(cigarId);
+  renderTree();
+}}
+
+async function openDetail(cigarId, event) {{
+  event.stopPropagation();
+  const cigar = cigars.find(c => c.id === cigarId);
+  if (!cigar) return;
+  document.getElementById('pane-cigars').style.display    = 'none';
+  document.getElementById('pane-unmatched').style.display = 'none';
+  document.getElementById('pane-detail').classList.add('active');
+  const r = await fetch(`/admin-tools/catalog/api/cigars/${{cigarId}}/aliases`);
+  const aliases = r.ok ? await r.json() : [];
+  renderDetailPanel(cigar, aliases);
+}}
+
+async function triggerScraper(slug, btn) {{
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {{
+    const r = await fetch(`/scraper-admin/trigger/${{slug}}`, {{ method: 'POST' }});
+    if (r.ok) {{
+      btn.textContent = '✓';
+      btn.style.color = '#16a34a';
+    }} else {{
+      btn.textContent = '✗';
+      btn.style.color = '#dc2626';
+      btn.disabled = false;
+    }}
+  }} catch (e) {{
+    btn.textContent = '✗';
+    btn.style.color = '#dc2626';
+    btn.disabled = false;
+  }}
+}}
+
+function closeDetail() {{
+  document.getElementById('pane-detail').classList.remove('active');
+  document.getElementById('pane-cigars').style.display    = activeTab === 'cigars'    ? '' : 'none';
+  document.getElementById('pane-unmatched').style.display = activeTab === 'unmatched' ? '' : 'none';
+}}
+
+function renderDetailPanel(cigar, aliases) {{
+  const srcRows = (cigar.sources || []).map(s => {{
+    const dot = `<span class="in-stock-dot" style="background:${{s.in_stock ? '#22c55e' : '#d1d5db'}}"></span>`;
+    const px  = s.price_single != null ? `${{s.currency}} ${{s.price_single.toFixed(2)}}` : '—';
+    const bx  = s.price_box    != null
+      ? `${{s.currency}} ${{s.price_box.toFixed(2)}}${{s.box_count ? '/'+s.box_count+'支' : ''}}`
+      : '—';
+    const link = s.url
+      ? `<a href="${{s.url}}" target="_blank" style="color:#0071e3;text-decoration:none">↗</a>` : '';
+    const triggerBtn = `<button
+        onclick="triggerScraper('${{s.slug}}', this)"
+        title="触发爬取 ${{s.slug}}"
+        style="margin-left:4px;padding:1px 5px;font-size:10px;cursor:pointer;
+               border:1px solid #d1d5db;border-radius:3px;background:#f9fafb;color:#374151;
+               line-height:1.4;vertical-align:middle">▶</button>`;
+    return `<tr>
+      <td>${{dot}} ${{s.name}}${{triggerBtn}}</td>
+      <td>${{px}}</td>
+      <td>${{bx}}</td>
+      <td style="color:#aaa;font-size:11px">${{s.scraped_at || ''}}</td>
+      <td><span style="font-size:10px;color:#bbb">#${{s.price_id}}</span> ${{link}}</td>
+    </tr>`;
+  }}).join('');
+
+  const aliasRows = aliases.length
+    ? aliases.map(a => `<div class="detail-alias-row">
+        <span class="detail-alias-src">${{a.source_slug}}</span>
+        <span style="flex:1">${{a.raw_name}}</span>
+        <span style="font-size:10px;color:#bbb">#${{a.id}}</span>
+      </div>`).join('')
+    : '<div class="detail-alias-row" style="color:#aaa">暂无别名</div>';
+
+  const specParts = [];
+  if (cigar.vitola)     specParts.push(cigar.vitola);
+  if (cigar.length_mm)  specParts.push(cigar.length_mm + ' mm');
+  if (cigar.ring_gauge) specParts.push('× ' + cigar.ring_gauge);
+
+  document.getElementById('detail-content').innerHTML = `
+    <div class="detail-title">${{cigar.name}}
+      <span style="font-size:13px;font-weight:400;color:#aaa">#${{cigar.id}}</span>
+    </div>
+    <div class="detail-meta">${{specParts.join(' · ') || '暂无规格信息'}}</div>
+    ${{cigar.sources && cigar.sources.length ? `
+    <div class="detail-section">价格来源</div>
+    <table class="detail-price-table">
+      <thead><tr><th>站点</th><th>单支</th><th>整盒</th><th>抓取时间</th><th>ID/链接</th></tr></thead>
+      <tbody>${{srcRows}}</tbody>
+    </table>` : '<div style="color:#aaa;font-size:13px;padding:8px 0">暂无价格数据</div>'}}
+    <div class="detail-section">爬虫别名</div>
+    <div>${{aliasRows}}</div>
+  `;
+}}
+
 function scrollToCigar(cigarId) {{
   // Switch to cigar tab if needed
   if (activeTab !== 'cigars') switchTab('cigars');
@@ -1088,7 +1243,7 @@ function renderCigars(list, catMap) {{
       ondragend="cigarDragEnd(event);this.draggable=false">
       <span class="drag-handle" title="拖至左侧分类" onmousedown="this.parentElement.draggable=true">⠿</span>
       <div class="cigar-name">
-        <div class="cn">${{c.name}}</div>
+        <div class="cn">${{c.name}} <span style="font-size:11px;color:#aaa;font-weight:400">#${{c.id}}</span></div>
         ${{specsLine}}
       </div>
       <div class="source-links">${{srcHtml}}</div>
@@ -1308,7 +1463,13 @@ function renderUnmatched(list) {{
       ? `<a href="${{u.product_url}}" target="_blank" class="src-icon" title="${{u.source_slug}}"
            style="margin-right:4px">${{u.source_slug.slice(0,4).toUpperCase()}}</a>`
       : `<span class="src-icon" style="opacity:.45;margin-right:4px">${{u.source_slug.slice(0,4).toUpperCase()}}</span>`;
-    const catOpts = buildCatSelectOpts(null);
+    // 从页面品牌选择器读取所有品牌选项
+    const brandOptEls = Array.from(document.querySelectorAll('#brand-select option'))
+      .filter(o => o.value && o.value !== '__unmatched__');
+    const brandOpts = brandOptEls.map(o =>
+      `<option value="${{o.value}}">${{o.textContent.trim()}}</option>`
+    ).join('');
+
     return `<div class="cigar-row" id="um-${{u.id}}" style="align-items:flex-start;flex-wrap:wrap;gap:6px"
       draggable="false"
       ondragstart="unmatchedDragStart(${{u.id}},event)"
@@ -1318,6 +1479,7 @@ function renderUnmatched(list) {{
         <div style="display:flex;align-items:center;gap:6px">
           ${{linkIcon}}
           <span style="font-weight:600;font-size:15px">${{u.raw_name}}</span>
+          <span style="font-size:11px;color:#aaa">#${{u.id}}</span>
         </div>
         <div class="um-meta" style="margin-top:3px">
           ${{price ? price + ' &nbsp;·&nbsp; ' : ''}}${{bestCand || '暂无候选'}}
@@ -1327,12 +1489,26 @@ function renderUnmatched(list) {{
           <input id="um-len-${{u.id}}" type="number" step="0.1" min="0" placeholder="长度 mm" style="width:72px">
           <input id="um-rg-${{u.id}}"  type="number" step="0.5" min="0" placeholder="环径"   style="width:56px">
         </div>
+        <div class="um-link-row">
+          <input id="um-link-${{u.id}}" type="text" placeholder="关联已有雪茄…"
+                 autocomplete="off"
+                 oninput="umLinkSearch(${{u.id}}, this.value)"
+                 list="um-dl-${{u.id}}">
+          <datalist id="um-dl-${{u.id}}"></datalist>
+          <button class="um-link-btn" onclick="doLinkUnmatched(${{u.id}})">关联</button>
+        </div>
       </div>
-      <select class="cat-select" style="min-width:160px;margin-top:4px"
-        onchange="quickCreateFromUnmatched(${{u.id}}, this.value, this)">
-        <option value="">— 选择分类创建 —</option>
-        ${{catOpts}}
-      </select>
+      <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;min-width:160px">
+        <select class="cat-select" style="width:100%"
+          onchange="umBrandChange(${{u.id}}, this.value)">
+          <option value="">— 选品牌 —</option>
+          ${{brandOpts}}
+        </select>
+        <select id="um-cat-${{u.id}}" class="cat-select" style="width:100%"
+          onchange="quickCreateFromUnmatched(${{u.id}}, this.value, this)" disabled>
+          <option value="">— 再选分类 —</option>
+        </select>
+      </div>
     </div>`;
   }}).join('');
   if (list.length > 200) {{
@@ -1377,6 +1553,116 @@ async function quickCreateFromUnmatched(unmatchedId, catId, selectEl) {{
     selectEl.value = '';
   }}
 }}
+// ── 未匹配行：品牌切换 → 加载该品牌分类 ─────────────────────────────────────
+async function umBrandChange(uid, brandId) {{
+  const catSel = document.getElementById(`um-cat-${{uid}}`);
+  if (!catSel) return;
+  catSel.innerHTML = '<option value="">加载中…</option>';
+  catSel.disabled = true;
+  if (!brandId) {{
+    catSel.innerHTML = '<option value="">— 再选分类 —</option>';
+    return;
+  }}
+  try {{
+    const r = await fetch(`/admin-tools/catalog/api/brands/${{brandId}}/categories`);
+    const cats = await r.json();
+    // Build nested options
+    function buildOpts(parentId, depth) {{
+      let html = '';
+      cats.filter(c => (c.parent_id ?? null) === parentId)
+          .sort((a, b) => (a.sort_order||0) - (b.sort_order||0))
+          .forEach(c => {{
+            html += `<option value="${{c.id}}">${{'\u00a0'.repeat(depth*2)}}${{c.name}}</option>`;
+            html += buildOpts(c.id, depth + 1);
+          }});
+      return html;
+    }}
+    catSel.innerHTML = '<option value="">— 选择分类 —</option>' + buildOpts(null, 0);
+    catSel.disabled = false;
+  }} catch(e) {{
+    catSel.innerHTML = '<option value="">加载失败</option>';
+  }}
+}}
+
+// ── 关联已有雪茄 ──────────────────────────────────────────────────────────────
+let _umLinkTimer = null;
+let _umLinkCache = {{}};  // query → [{{id, name}}]
+
+async function umLinkSearch(uid, query) {{
+  const q = query.trim();
+  const dl = document.getElementById(`um-dl-${{uid}}`);
+  if (!dl) return;
+  if (!q) {{ dl.innerHTML = ''; return; }}
+
+  // Use cache if available
+  if (_umLinkCache[q]) {{
+    dl.innerHTML = _umLinkCache[q].map(c => `<option value="${{c.name}}" data-id="${{c.id}}">`).join('');
+    return;
+  }}
+
+  clearTimeout(_umLinkTimer);
+  _umLinkTimer = setTimeout(async () => {{
+    try {{
+      const r = await fetch(`/admin-tools/catalog/api/cigars/search?q=${{encodeURIComponent(q)}}`);
+      if (!r.ok) return;
+      const results = await r.json();
+      _umLinkCache[q] = results;
+      dl.innerHTML = results.map(c => `<option value="${{c.name}}" data-id="${{c.id}}">`).join('');
+    }} catch(e) {{}}
+  }}, 250);
+}}
+
+async function doLinkUnmatched(uid) {{
+  const input = document.getElementById(`um-link-${{uid}}`);
+  if (!input) return;
+  const val = input.value.trim();
+  if (!val) {{ showToast('请输入雪茄名称', false); return; }}
+
+  // Find cigar id from cache
+  let cigarId = null;
+  for (const results of Object.values(_umLinkCache)) {{
+    const match = results.find(c => c.name.toLowerCase() === val.toLowerCase());
+    if (match) {{ cigarId = match.id; break; }}
+  }}
+
+  if (!cigarId) {{
+    // Try a direct search
+    try {{
+      const r = await fetch(`/admin-tools/catalog/api/cigars/search?q=${{encodeURIComponent(val)}}`);
+      const results = await r.json();
+      const exact = results.find(c => c.name.toLowerCase() === val.toLowerCase());
+      if (exact) cigarId = exact.id;
+    }} catch(e) {{}}
+  }}
+
+  if (!cigarId) {{ showToast('未找到匹配雪茄，请确认名称', false); return; }}
+
+  const btn = input.nextElementSibling?.nextElementSibling || input.parentElement.querySelector('.um-link-btn');
+  if (btn) btn.disabled = true;
+  try {{
+    const r = await fetch(`/admin-tools/catalog/api/unmatched/${{uid}}/link-alias`, {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{cigar_id: cigarId}}),
+    }});
+    const data = await r.json();
+    if (!r.ok) {{
+      showToast('关联失败：' + (data.error || r.status), false);
+      if (btn) btn.disabled = false;
+      return;
+    }}
+    const row = document.getElementById(`um-${{uid}}`);
+    if (row) row.remove();
+    const idx = unmatched.findIndex(x => x.id === uid);
+    if (idx !== -1) unmatched.splice(idx, 1);
+    document.getElementById('tc-unmatched').textContent = unmatched.length;
+    showToast(`✓ 已关联到 ${{data.cigar_name}}`);
+  }} catch(e) {{
+    showToast('网络错误：' + e.message, false);
+    if (btn) btn.disabled = false;
+  }}
+}}
+
 // ── Panel resizer ─────────────────────────────────────────────────────────────
 (function() {{
   let dragging = false, startX = 0, startW = 0;
@@ -1464,10 +1750,17 @@ async def get_cigars(brand_id: int, request: Request):
         # Abbreviate source name: take first letter of each Chinese word segment or first 3 chars of slug
         abbr = source.slug[:4].upper()
         cigar_sources[price.cigar_id].append({
-            "slug": source.slug,
-            "name": source.name,
-            "abbr": abbr,
-            "url":  price.product_url,
+            "slug":         source.slug,
+            "name":         source.name,
+            "abbr":         abbr,
+            "url":          price.product_url,
+            "price_id":     price.id,
+            "price_single": price.price_single,
+            "price_box":    price.price_box,
+            "box_count":    price.box_count,
+            "currency":     price.currency,
+            "in_stock":     price.in_stock,
+            "scraped_at":   price.scraped_at.strftime("%Y-%m-%d %H:%M") if price.scraped_at else None,
         })
 
     return [
@@ -1484,6 +1777,18 @@ async def get_cigars(brand_id: int, request: Request):
         }
         for c, _ in rows
     ]
+
+
+@router.get("/api/cigars/{cigar_id}/aliases")
+async def get_cigar_aliases(cigar_id: int, request: Request):
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            select(ScraperNameAlias).where(ScraperNameAlias.cigar_id == cigar_id)
+        )
+        aliases = r.scalars().all()
+    return [{"id": a.id, "source_slug": a.source_slug, "raw_name": a.raw_name} for a in aliases]
 
 
 @router.get("/api/unmatched")
@@ -1839,3 +2144,101 @@ async def quick_create_from_unmatched(item_id: int, request: Request):
         "is_new": is_new,
         "auto_matched": auto_count,
     }
+
+
+@router.get("/api/cigars/search")
+async def search_cigars(request: Request, q: str = ""):
+    """全库雪茄名称搜索（供未匹配条目关联使用）。"""
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    async with AsyncSessionLocal() as db:
+        stmt = select(Cigar).order_by(Cigar.name)
+        if q:
+            stmt = stmt.where(Cigar.name.ilike(f"%{q}%"))
+        r = await db.execute(stmt.limit(30))
+        cigars = r.scalars().all()
+    return [{"id": c.id, "name": c.name} for c in cigars]
+
+
+@router.post("/api/unmatched/{item_id}/link-alias")
+async def link_unmatched_to_cigar(item_id: int, request: Request):
+    """
+    将未匹配条目关联到已有雪茄：
+      1. 建立 ScraperNameAlias（source_slug + raw_name → cigar_id）
+      2. 将价格写入 Price / PriceHistory
+      3. 删除 UnmatchedItem
+    """
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    data = await request.json()
+    cigar_id = data.get("cigar_id")
+    if not cigar_id:
+        return JSONResponse({"error": "cigar_id required"}, status_code=400)
+
+    async with AsyncSessionLocal() as db:
+        item = await db.get(UnmatchedItem, item_id)
+        if not item:
+            return JSONResponse({"error": "unmatched item not found"}, status_code=404)
+        cigar = await db.get(Cigar, cigar_id)
+        if not cigar:
+            return JSONResponse({"error": "cigar not found"}, status_code=404)
+
+        # Create alias (ignore if already exists)
+        dup = await db.execute(
+            select(ScraperNameAlias).where(
+                ScraperNameAlias.source_slug == item.source_slug,
+                ScraperNameAlias.raw_name   == item.raw_name,
+            )
+        )
+        if not dup.scalar_one_or_none():
+            db.add(ScraperNameAlias(
+                source_slug=item.source_slug,
+                raw_name=item.raw_name,
+                cigar_id=cigar_id,
+            ))
+
+        # Write price
+        if item.price_single is not None or item.price_box is not None:
+            from datetime import datetime, timezone
+            src_r = await db.execute(select(Source).where(Source.slug == item.source_slug))
+            source = src_r.scalar_one_or_none()
+            if source:
+                now = datetime.now(timezone.utc)
+                existing_price = await db.execute(
+                    select(Price).where(
+                        Price.cigar_id == cigar_id,
+                        Price.source_id == source.id,
+                    )
+                )
+                price_row = existing_price.scalar_one_or_none()
+                if price_row:
+                    price_row.price_single = item.price_single
+                    price_row.price_box    = item.price_box
+                    price_row.currency     = item.currency
+                    price_row.product_url  = item.product_url
+                    price_row.in_stock     = True
+                    price_row.scraped_at   = now
+                else:
+                    db.add(Price(
+                        cigar_id    = cigar_id,
+                        source_id   = source.id,
+                        price_single= item.price_single,
+                        price_box   = item.price_box,
+                        currency    = item.currency,
+                        product_url = item.product_url,
+                        in_stock    = True,
+                        scraped_at  = now,
+                    ))
+                db.add(PriceHistory(
+                    cigar_id    = cigar_id,
+                    source_id   = source.id,
+                    price_single= item.price_single,
+                    price_box   = item.price_box,
+                    currency    = item.currency,
+                    scraped_at  = now,
+                ))
+
+        await db.delete(item)
+        await db.commit()
+
+    return {"ok": True, "cigar_id": cigar_id, "cigar_name": cigar.name}

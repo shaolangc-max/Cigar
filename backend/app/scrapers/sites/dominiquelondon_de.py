@@ -8,7 +8,8 @@ from app.scrapers.registry import register
 
 @register
 class DominiqueLondonDeScraper(OdooShopScraper):
-    source_slug = "dominiquelondon-de"
-    base_url    = "https://www.dominiquelondon.de"
-    category_id = 134
-    currency    = "EUR"
+    source_slug               = "dominiquelondon-de"
+    base_url                  = "https://www.dominiquelondon.de"
+    category_id               = 134
+    currency                  = "EUR"
+    fetch_packaging_variants  = True

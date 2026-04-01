@@ -58,6 +58,13 @@ _QTY_RE      = re.compile(r"(\d+)\s*(?:er|x)?\s*(?:kiste|schachtel|cigars?|stüc
 _URL_QTY_RE  = re.compile(r"-(\d+)(?:\?|$)")
 _KNOWN_SIZES = {3, 5, 10, 12, 15, 20, 25, 40, 50}
 
+# 详情页规格变体链接（#packaging_products 区块）
+_PKG_VARIANT_RE = re.compile(
+    r'packaging_product_button"[^>]*href="(/(?:[a-z]{2}/)?shop/[^"?#]+)'
+)
+# 详情页产品名 <h1 itemprop="name">
+_DETAIL_NAME_RE = re.compile(r'itemprop="name"[^>]*>([^<]+)</h1>')
+
 
 def _count_from_url(url: str) -> int | None:
     m = _URL_QTY_RE.search(url)
@@ -88,12 +95,14 @@ class OdooShopScraper(BaseScraper):
     Abstract Odoo shop scraper.
     Subclass must set: source_slug, base_url, category_id, currency
     Optional: lang_prefix (e.g. "en_US"), category_slug (e.g. "cigares-cubains")
+              fetch_packaging_variants: also follow #packaging_products links on detail pages
     """
-    base_url:       str
-    category_id:    int
-    currency:       str
-    lang_prefix:    str = ""    # URL 语言前缀, 如 "en_US"
-    category_slug:  str = ""    # 分类名前缀, 如 "cigares-cubains"
+    base_url:                 str
+    category_id:              int
+    currency:                 str
+    lang_prefix:              str  = ""    # URL 语言前缀, 如 "en_US"
+    category_slug:            str  = ""    # 分类名前缀, 如 "cigares-cubains"
+    fetch_packaging_variants: bool = False # 是否抓取详情页的其他规格变体
 
     def _category_url(self, page: int) -> str:
         lang = f"/{self.lang_prefix}" if self.lang_prefix else ""
@@ -166,4 +175,108 @@ class OdooShopScraper(BaseScraper):
                 page += 1
                 await asyncio.sleep(0.4)
 
+            if self.fetch_packaging_variants:
+                items = await self._enrich_with_variants(client, items)
+
         return items
+
+    async def _enrich_with_variants(
+        self, client: httpx.AsyncClient, items: list[ScrapedItem]
+    ) -> list[ScrapedItem]:
+        """
+        对列表中每个产品，访问其详情页，提取 #packaging_products 中的其他规格链接，
+        抓取尚未收录的变体，追加到 items 中。
+        """
+        seen_urls: set[str] = {
+            # 标准化已有 URL：去掉语言前缀和查询参数
+            self._norm_url(it.product_url)
+            for it in items if it.product_url
+        }
+        extra: list[ScrapedItem] = []
+        sem = asyncio.Semaphore(3)
+
+        async def process(item: ScrapedItem):
+            if not item.product_url:
+                return
+            async with sem:
+                try:
+                    r = await client.get(item.product_url)
+                    detail_html = r.text
+                except Exception:
+                    return
+                await asyncio.sleep(0.2)
+
+            # 提取同一产品的其他规格链接
+            for m in _PKG_VARIANT_RE.finditer(detail_html):
+                rel_path = m.group(1)
+                # 去掉语言前缀 /de/ /en_US/ 等
+                clean = re.sub(r'^/[a-z]{2}(?:_[A-Z]{2})?/', '/shop/', rel_path)
+                if not clean.startswith('/shop/'):
+                    clean = rel_path
+                norm = self._norm_url(self.base_url + clean)
+                if norm in seen_urls:
+                    continue
+                seen_urls.add(norm)
+
+                # 抓取变体详情页
+                variant_url = self.base_url + clean
+                async with sem:
+                    try:
+                        rv = await client.get(variant_url)
+                        vhtml = rv.text
+                    except Exception:
+                        continue
+                    await asyncio.sleep(0.2)
+
+                vi = self._parse_detail_page(vhtml, variant_url)
+                if vi:
+                    extra.append(vi)
+
+        await asyncio.gather(*[process(it) for it in items])
+        return items + extra
+
+    def _norm_url(self, url: str) -> str:
+        """标准化 URL：去掉查询参数和语言前缀，仅保留路径主干。"""
+        path = url.split("?")[0].split("#")[0]
+        path = re.sub(r'^https?://[^/]+', '', path)
+        path = re.sub(r'^/[a-z]{2}(?:_[A-Z]{2})?/', '/', path)
+        return path.rstrip('/')
+
+    def _parse_detail_page(self, html: str, url: str) -> ScrapedItem | None:
+        """从产品详情页提取 ScrapedItem。"""
+        name_m  = _DETAIL_NAME_RE.search(html)
+        price_m = _PRICE_RE.search(html)
+        if not (name_m and price_m):
+            return None
+
+        brand_m  = _BRAND_RE.search(html)
+        brand    = (brand_m.group(1) or brand_m.group(2) or "").strip() if brand_m else ""
+        name_raw = name_m.group(1).strip()
+        raw_name = (
+            f"{brand} {name_raw}".strip()
+            if brand and brand.lower() not in name_raw.lower()
+            else name_raw
+        )
+
+        price = _parse_price(price_m.group(1))
+        if price is None or price <= 0:
+            return None
+
+        has_cart = bool(_CART_RE.search(html))
+        is_oos   = bool(_OOS_RE.search(html))
+        in_stock = has_cart or not is_oos
+
+        qty_m     = _QTY_RE.search(raw_name)
+        box_count = int(qty_m.group(1)) if qty_m else _count_from_url(url)
+        product_url = url.split("?")[0]
+
+        return ScrapedItem(
+            source_slug  = self.source_slug,
+            raw_name     = raw_name,
+            product_url  = product_url,
+            price_single = None if (box_count and box_count > 1) else price,
+            price_box    = price if (box_count and box_count > 1) else None,
+            box_count    = box_count,
+            currency     = self.currency,
+            in_stock     = in_stock,
+        )

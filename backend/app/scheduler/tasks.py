@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from app.config import settings
 
@@ -72,6 +72,10 @@ async def _run_scraper(scraper) -> None:
         finished_at = datetime.now(timezone.utc)
 
         async with AsyncSessionLocal() as db:
+            # 先清除该站上次运行留下的未匹配条目，避免重复累积
+            await db.execute(
+                delete(UnmatchedItem).where(UnmatchedItem.source_slug == scraper.source_slug)
+            )
             for u in unmatched_items_data:
                 db.add(UnmatchedItem(
                     run_id=run_id,
