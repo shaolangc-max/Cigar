@@ -1668,6 +1668,16 @@ async function doLinkUnmatched(uid) {{
       body: JSON.stringify({{cigar_id: cigarId}}),
     }});
     const data = await r.json();
+    if (r.status === 404) {{
+      // 爬虫重跑后旧 id 已失效，静默移除
+      const row = document.getElementById(`um-${{uid}}`);
+      if (row) row.remove();
+      const idx = unmatched.findIndex(x => x.id === uid);
+      if (idx !== -1) unmatched.splice(idx, 1);
+      document.getElementById('tc-unmatched').textContent = unmatched.length;
+      showToast('条目已过期，请刷新页面获取最新列表', false);
+      return;
+    }}
     if (!r.ok) {{
       showToast('关联失败：' + (data.error || r.status), false);
       if (btn) btn.disabled = false;
