@@ -442,9 +442,8 @@ async function loadCategories() {{
   const r = await fetch(`/admin-tools/catalog/api/brands/${{currentBrandId}}/categories`);
   categories = await r.json();
   if (!_treeInitialized) {{
-    // First load for this brand: collapse all non-leaf categories
-    const parentIds = new Set(categories.map(c => c.parent_id).filter(id => id != null));
-    collapsedCats = new Set(parentIds);
+    // First load for this brand: collapse every category (all start as ▶)
+    collapsedCats = new Set(categories.map(c => c.id));
     _treeInitialized = true;
   }}
   renderTree();
