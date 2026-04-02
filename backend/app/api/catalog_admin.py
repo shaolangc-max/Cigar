@@ -385,6 +385,7 @@ let pendingChanges = new Map();  // cigar_id → {{oldCatId, newCatId}}
 let activeTab   = 'cigars';
 let collapsedCats   = new Set();  // category ids that are collapsed in the tree
 let expandedCigars  = new Set();  // cigar ids expanded in the tree (showing sources)
+let _treeInitialized = false;     // whether collapsedCats has been set for current brand
 
 // ── Toast ──────────────────────────────────────────────────────────────────────
 function showToast(text, ok = true) {{
@@ -430,6 +431,7 @@ async function loadBrand(value, brandName) {{
   newCatBtn.style.display  = '';
   pendingChanges.clear();
   updateSaveBar();
+  _treeInitialized = false;  // reset so new brand gets fresh collapsed state
   await loadCategories();
   await loadCigars();
   await loadUnmatched(brandName);
@@ -439,9 +441,12 @@ async function loadBrand(value, brandName) {{
 async function loadCategories() {{
   const r = await fetch(`/admin-tools/catalog/api/brands/${{currentBrandId}}/categories`);
   categories = await r.json();
-  // Default: collapse all non-leaf categories (those that are a parent of another)
-  const parentIds = new Set(categories.map(c => c.parent_id).filter(id => id != null));
-  collapsedCats = new Set(parentIds);
+  if (!_treeInitialized) {{
+    // First load for this brand: collapse all non-leaf categories
+    const parentIds = new Set(categories.map(c => c.parent_id).filter(id => id != null));
+    collapsedCats = new Set(parentIds);
+    _treeInitialized = true;
+  }}
   renderTree();
   renderParentSelect();
   populateCategoryFilter();
@@ -1080,8 +1085,9 @@ async function saveCategory() {{
   if (!r.ok) {{ showToast('保存失败: ' + (await r.text()), false); return; }}
   showToast('分类已保存');
   const wasNew = !editingCatId;
+  const savedParentId = body.parent_id ?? null;
   cancelCatForm();
-  if (wasNew) collapsedCats.clear();  // new category: expand tree so it's visible
+  if (wasNew && savedParentId !== null) collapsedCats.delete(savedParentId);  // expand parent so new child is visible
   await loadCategories();
   filterCigars();  // refresh dropdowns in cigar list
 }}
