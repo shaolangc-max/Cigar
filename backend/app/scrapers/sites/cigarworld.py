@@ -108,7 +108,7 @@ def _parse_detail(html: str, url: str, raw_name: str, source_slug: str) -> list[
 @register
 class CigarWorldScraper(BaseScraper):
     source_slug = "cigarworld"
-    min_interval_hours = 12  # 详情页抓取较慢，限制每 12 小时最多跑一次
+    dedicated_schedule = True  # 由专属 cron（0:00 / 12:00）触发，不参与全局轮询
 
     async def scrape(self) -> list[ScrapedItem]:
         async with httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True) as client:

@@ -53,27 +53,6 @@ async def update_exchange_rates():
 
 async def _run_scraper(scraper) -> None:
     """运行单个爬虫并记录结果，无并发限制（调用方自行控制并发）。"""
-    # 检查 min_interval_hours：若距上次成功运行未超过间隔则跳过
-    min_hours = getattr(scraper, "min_interval_hours", None)
-    if min_hours:
-        async with AsyncSessionLocal() as db:
-            last_run = await db.execute(
-                select(ScraperRun)
-                .where(ScraperRun.source_slug == scraper.source_slug,
-                       ScraperRun.status == "success")
-                .order_by(ScraperRun.finished_at.desc())
-                .limit(1)
-            )
-            last = last_run.scalar_one_or_none()
-        if last and last.finished_at:
-            finished = last.finished_at
-            if finished.tzinfo is None:
-                finished = finished.replace(tzinfo=timezone.utc)
-            hours_since = (datetime.now(timezone.utc) - finished).total_seconds() / 3600
-            if hours_since < min_hours:
-                log.info(f"  {scraper.source_slug}: skipped (last run {hours_since:.1f}h ago, interval={min_hours}h)")
-                return
-
     started_at = datetime.now(timezone.utc)
     run_id: int | None = None
     async with AsyncSessionLocal() as db:
@@ -143,7 +122,7 @@ async def run_single_scraper(source_slug: str) -> None:
 
 
 async def run_all_scrapers():
-    scrapers = get_all()
+    scrapers = [s for s in get_all() if not getattr(s, "dedicated_schedule", False)]
     log.info(f"Starting scrape: {len(scrapers)} sources")
     sem = asyncio.Semaphore(settings.scraper_concurrency)
 

@@ -12,7 +12,7 @@ from app.admin import create_admin
 from app.config import settings
 from app.db import AsyncSessionLocal
 from app.models import Price
-from app.scheduler.tasks import run_all_scrapers, update_exchange_rates
+from app.scheduler.tasks import run_all_scrapers, update_exchange_rates, run_single_scraper
 
 import logging
 log = logging.getLogger(__name__)
@@ -43,8 +43,9 @@ async def lifespan(app: FastAPI):
     else:
         log.info(f"Last scrape was {hours_ago:.1f}h ago — skipping immediate run.")
 
-    scheduler.add_job(run_all_scrapers,      "cron", hour="0,4,8,12,16,20", minute=0, id="scrape")
-    scheduler.add_job(update_exchange_rates, "cron", hour="0,4,8,12,16,20", minute=0, id="fx")
+    scheduler.add_job(run_all_scrapers,                          "cron", hour="0,4,8,12,16,20", minute=0,  id="scrape")
+    scheduler.add_job(update_exchange_rates,                     "cron", hour="0,4,8,12,16,20", minute=0,  id="fx")
+    scheduler.add_job(run_single_scraper, "cron", hour="0,12",  minute=5, id="scrape_cigarworld", args=["cigarworld"])
     scheduler.start()
     log.info("Scheduler started.")
 
