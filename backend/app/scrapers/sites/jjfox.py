@@ -34,6 +34,18 @@ QUERY = """
     items {
       name
       url_key
+      ... on ConfigurableProduct {
+        variants {
+          product {
+            price_range {
+              minimum_price {
+                regular_price { value currency }
+              }
+            }
+          }
+          attributes { label }
+        }
+      }
       price_range {
         minimum_price {
           regular_price { value currency }
@@ -45,6 +57,7 @@ QUERY = """
 """
 
 _QTY_RE = re.compile(r"(\d+)\s*(?:er\s*Kiste|er\s*Box|Stück|Cigars?|pack|x\s+\d+)", re.I)
+_BOX_LABEL_RE = re.compile(r"BOX\s+OF\s+(\d+)", re.I)
 
 
 @register
@@ -65,39 +78,87 @@ class JJFoxScraper(BaseScraper):
                     break
 
                 for p in data["items"]:
-                    name      = p["name"]
-                    url_key   = p.get("url_key", "")
+                    name        = p["name"]
+                    url_key     = p.get("url_key", "")
                     product_url = f"{BASE}/{url_key}.html" if url_key else None
-                    price_obj = p["price_range"]["minimum_price"]["regular_price"]
-                    price     = price_obj["value"]
-                    currency  = price_obj["currency"]
-                    in_stock  = True  # Magento GraphQL stock_status not available on this instance
+                    in_stock    = True  # Magento GraphQL stock_status not available on this instance
 
-                    qty_m     = _QTY_RE.search(name)
-                    qty       = int(qty_m.group(1)) if qty_m else None
+                    variants = p.get("variants") or []
+                    if variants:
+                        # Configurable product: emit one ScrapedItem per variant
+                        for v in variants:
+                            label     = v["attributes"][0]["label"] if v.get("attributes") else ""
+                            price_obj = v["product"]["price_range"]["minimum_price"]["regular_price"]
+                            price     = price_obj["value"]
+                            currency  = price_obj["currency"]
 
-                    if qty and qty > 1:
-                        items.append(ScrapedItem(
-                            source_slug  = self.source_slug,
-                            raw_name     = name,
-                            product_url  = product_url,
-                            price_single = None,
-                            price_box    = price,
-                            box_count    = qty,
-                            currency     = currency,
-                            in_stock     = in_stock,
-                        ))
+                            box_m = _BOX_LABEL_RE.search(label)
+                            qty_m = _QTY_RE.search(label) or _QTY_RE.search(name)
+                            if box_m:
+                                qty = int(box_m.group(1))
+                                items.append(ScrapedItem(
+                                    source_slug  = self.source_slug,
+                                    raw_name     = name,
+                                    product_url  = product_url,
+                                    price_single = None,
+                                    price_box    = price,
+                                    box_count    = qty,
+                                    currency     = currency,
+                                    in_stock     = in_stock,
+                                ))
+                            elif qty_m and int(qty_m.group(1)) > 1:
+                                qty = int(qty_m.group(1))
+                                items.append(ScrapedItem(
+                                    source_slug  = self.source_slug,
+                                    raw_name     = name,
+                                    product_url  = product_url,
+                                    price_single = None,
+                                    price_box    = price,
+                                    box_count    = qty,
+                                    currency     = currency,
+                                    in_stock     = in_stock,
+                                ))
+                            else:
+                                items.append(ScrapedItem(
+                                    source_slug  = self.source_slug,
+                                    raw_name     = name,
+                                    product_url  = product_url,
+                                    price_single = price,
+                                    price_box    = None,
+                                    box_count    = None,
+                                    currency     = currency,
+                                    in_stock     = in_stock,
+                                ))
                     else:
-                        items.append(ScrapedItem(
-                            source_slug  = self.source_slug,
-                            raw_name     = name,
-                            product_url  = product_url,
-                            price_single = price,
-                            price_box    = None,
-                            box_count    = None,
-                            currency     = currency,
-                            in_stock     = in_stock,
-                        ))
+                        # Simple product: fall back to name-based qty parsing
+                        price_obj = p["price_range"]["minimum_price"]["regular_price"]
+                        price     = price_obj["value"]
+                        currency  = price_obj["currency"]
+                        qty_m     = _QTY_RE.search(name)
+                        qty       = int(qty_m.group(1)) if qty_m else None
+
+                        if qty and qty > 1:
+                            items.append(ScrapedItem(
+                                source_slug  = self.source_slug,
+                                raw_name     = name,
+                                product_url  = product_url,
+                                price_single = None,
+                                price_box    = price,
+                                box_count    = qty,
+                                currency     = currency,
+                                in_stock     = in_stock,
+                            ))
+                        else:
+                            items.append(ScrapedItem(
+                                source_slug  = self.source_slug,
+                                raw_name     = name,
+                                product_url  = product_url,
+                                price_single = price,
+                                price_box    = None,
+                                box_count    = None,
+                                currency     = currency,
+                                in_stock     = in_stock,
+                            ))
 
                 total = data["total_count"]
                 if page * PAGE_SIZE >= total:
