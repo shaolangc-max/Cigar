@@ -21,7 +21,11 @@ HEADERS = {
 BASE       = "https://cigarviu.com"
 COLLECTION = "cuba"
 
-_COUNT_RE    = re.compile(r"(\d+)\s*(?:er|x)?\s*(?:kiste|schachtel|cigars?|stück|box|pack)", re.I)
+_COUNT_RE    = re.compile(
+    r"(\d+)\s*(?:er|x)?\s*(?:kiste|schachtel|cigars?|stück)"   # 25er Kiste / 10 Cigars
+    r"|(?:box|pack|cabinet|cube|boite|kiste)\s*(?:of\s*)?(\d+)",  # Box of 25 / Cabinet of 10
+    re.I,
+)
 _HANDLE_RE   = re.compile(r"-(\d+)$")
 _KNOWN_SIZES = {3, 5, 10, 12, 15, 20, 25, 40, 50}
 
@@ -61,7 +65,7 @@ def _parse(products: list[dict], source_slug: str) -> list[ScrapedItem]:
 
             vt_lower  = vt.lower()
             count_m   = _COUNT_RE.search(vt_lower)
-            count     = int(count_m.group(1)) if count_m else None
+            count     = int(count_m.group(1) or count_m.group(2)) if count_m else None
             is_single = (
                 "einzeln" in vt_lower
                 or "single" in vt_lower
