@@ -21,6 +21,7 @@ from app.models.series import Series
 from app.models.source import Source
 from app.models.scraper_run import UnmatchedItem
 from app.models.alias import ScraperNameAlias
+from app.models.ignored_raw_name import IgnoredRawName
 from app.models.price import Price, PriceHistory
 from app.scrapers.matcher import similarity
 from sqlalchemy import select, func, text as _sql
@@ -181,10 +182,9 @@ async def catalog_page(request: Request):
   .detail-alias-row {{ font-size:12px;padding:4px 0;border-bottom:1px solid #f5f5f5;display:flex;gap:8px; }}
   .detail-alias-src {{ color:#0071e3;font-weight:600;flex-shrink:0; }}
   .in-stock-dot {{ display:inline-block;width:7px;height:7px;border-radius:50%; }}
-  .tree-cigar {{ display: flex; align-items: center; padding: 3px 8px 3px 0;
+  .tree-cigar {{ display: flex; align-items: flex-start; padding: 3px 8px 3px 0;
                  font-size: 12px; color: #444; cursor: pointer; border-radius: 6px;
-                 transition: background .12s; white-space: nowrap; overflow: hidden;
-                 text-overflow: ellipsis; }}
+                 transition: background .12s; }}
   .tree-cigar:hover {{ background: #eef3ff; color: #0071e3; }}
   .tree-cigar.highlighted {{ background: #ddeaff; }}
   .tree-cigar-dot {{ width: 14px; flex-shrink: 0; text-align: center;
@@ -254,6 +254,27 @@ async def catalog_page(request: Request):
              align-items: flex-start; gap: 10px; }}
   .um-name {{ flex: 1; font-size: 14px; font-weight: 500; }}
   .um-meta {{ font-size: 12px; color: #86868b; margin-top: 2px; }}
+  .um-ignore-btn {{ font-size: 14px; cursor: pointer; color: #c8c8d0; padding: 2px 4px;
+                    border-radius: 4px; flex-shrink: 0; line-height: 1; transition: color .15s; }}
+  .um-ignore-btn:hover {{ color: #ff3b30; }}
+  /* trash bin */
+  .trash-section {{ margin-top: 20px; border-top: 1px solid #e8e8ed; padding-top: 12px; }}
+  .trash-header {{ display: flex; align-items: center; gap: 8px; cursor: pointer;
+                   font-size: 13px; color: #86868b; padding: 4px 0; user-select: none; }}
+  .trash-header:hover {{ color: #333; }}
+  .trash-toggle {{ font-size: 10px; transition: transform .2s; }}
+  .trash-toggle.open {{ transform: rotate(90deg); }}
+  .trash-list {{ margin-top: 8px; display: none; }}
+  .trash-list.open {{ display: block; }}
+  .trash-row {{ display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+                background: #fff8f8; border: 1px solid #fde0e0; border-radius: 8px;
+                margin-bottom: 5px; font-size: 13px; }}
+  .trash-name {{ flex: 1; color: #555; }}
+  .trash-src {{ font-size: 11px; color: #aaa; flex-shrink: 0; }}
+  .trash-restore-btn {{ font-size: 11px; padding: 2px 8px; border-radius: 5px;
+                        border: 1px solid #34c759; background: #eeffee; color: #22a047;
+                        cursor: pointer; font-family: inherit; flex-shrink: 0; }}
+  .trash-restore-btn:hover {{ background: #d4f8dc; }}
   .score-bar {{ display: inline-block; width: 40px; height: 4px; background: #e0e0e5;
                 border-radius: 2px; vertical-align: middle; margin-right: 4px; }}
   .score-fill {{ height: 100%; border-radius: 2px; background: #34c759; }}
@@ -361,6 +382,15 @@ async def catalog_page(request: Request):
         </select>
       </div>
       <div id="unmatched-list"><p class="empty">请先选择品牌</p></div>
+      <!-- 垃圾箱 -->
+      <div class="trash-section">
+        <div class="trash-header" onclick="toggleTrashBin()">
+          <span class="trash-toggle" id="trash-toggle">▶</span>
+          🗑 垃圾箱
+          <span class="tab-count" id="tc-ignored" style="display:none">0</span>
+        </div>
+        <div class="trash-list" id="trash-list"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -511,7 +541,7 @@ function buildTreeHtml(parentId, depth) {{
                    ondrop="treeCigarDrop(${{c.id}},event)">
           <span class="tree-cigar-handle" onmousedown="this.parentElement.draggable=true" title="拖拽排序">⠿</span>
           <span class="tree-cigar-toggle" onclick="toggleCigar(${{c2.id}},event)">${{toggleIcon}}</span>
-          <span style="overflow:hidden;text-overflow:ellipsis;cursor:pointer;flex:1" onclick="openDetail(${{c2.id}},event)">${{c2.name}}</span>
+          <span style="cursor:pointer;flex:1;word-break:break-word" onclick="openDetail(${{c2.id}},event)">${{c2.name}}</span>
           <span style="font-size:10px;color:#aaa;flex-shrink:0;margin-left:4px">#${{c2.id}}</span>
         </div>${{sourcesHtml}}`;
     }}).join('');
@@ -1439,6 +1469,7 @@ async function loadUnmatched(brandName) {{
   document.getElementById('tc-unmatched').textContent = unmatched.length;
   populateSourceFilter();
   filterUnmatched();
+  loadIgnored();
 }}
 
 function populateSourceFilter() {{
@@ -1488,6 +1519,7 @@ function renderUnmatched(list) {{
           ${{linkIcon}}
           <span style="font-weight:600;font-size:15px">${{u.raw_name}}</span>
           <span style="font-size:11px;color:#aaa">#${{u.id}}</span>
+          <span class="um-ignore-btn" title="移入垃圾箱" onclick="ignoreUnmatched(${{u.id}})">🗑</span>
         </div>
         <div class="um-meta" style="margin-top:3px">
           ${{price ? price + ' &nbsp;·&nbsp; ' : ''}}${{bestCand || '暂无候选'}}
@@ -1725,6 +1757,72 @@ async function doLinkUnmatched(uid) {{
     document.body.style.userSelect = '';
   }});
 }})();
+
+// ── 垃圾箱 ────────────────────────────────────────────────────────────────────
+let ignoredItems = [];
+
+async function ignoreUnmatched(uid) {{
+  const row = document.getElementById(`um-${{uid}}`);
+  const r = await fetch(`/admin-tools/catalog/api/unmatched/${{uid}}/ignore`, {{method: 'POST'}});
+  if (!r.ok) {{ showToast('操作失败', false); return; }}
+  if (row) row.remove();
+  const idx = unmatched.findIndex(x => x.id === uid);
+  if (idx !== -1) unmatched.splice(idx, 1);
+  document.getElementById('tc-unmatched').textContent = unmatched.length;
+  showToast('已移入垃圾箱');
+  await loadIgnored();
+}}
+
+async function loadIgnored() {{
+  const r = await fetch('/admin-tools/catalog/api/ignored');
+  ignoredItems = await r.json();
+  const badge = document.getElementById('tc-ignored');
+  if (ignoredItems.length > 0) {{
+    badge.textContent = ignoredItems.length;
+    badge.style.display = '';
+  }} else {{
+    badge.style.display = 'none';
+  }}
+  const listEl = document.getElementById('trash-list');
+  if (listEl.classList.contains('open')) renderIgnored();
+}}
+
+function renderIgnored() {{
+  const listEl = document.getElementById('trash-list');
+  if (!ignoredItems.length) {{
+    listEl.innerHTML = '<p class="empty" style="font-size:12px;padding:4px 0">垃圾箱为空</p>';
+    return;
+  }}
+  listEl.innerHTML = ignoredItems.map(i => `
+    <div class="trash-row" id="ig-${{i.id}}">
+      <span class="trash-src">${{i.source_slug}}</span>
+      <span class="trash-name">${{i.raw_name}}</span>
+      <button class="trash-restore-btn" onclick="restoreIgnored(${{i.id}})">↩ 恢复</button>
+    </div>`).join('');
+}}
+
+function toggleTrashBin() {{
+  const listEl   = document.getElementById('trash-list');
+  const toggleEl = document.getElementById('trash-toggle');
+  const open = listEl.classList.toggle('open');
+  toggleEl.classList.toggle('open', open);
+  if (open) renderIgnored();
+}}
+
+async function restoreIgnored(ignoredId) {{
+  const r = await fetch(`/admin-tools/catalog/api/ignored/${{ignoredId}}`, {{method: 'DELETE'}});
+  if (!r.ok) {{ showToast('恢复失败', false); return; }}
+  const row = document.getElementById(`ig-${{ignoredId}}`);
+  if (row) row.remove();
+  ignoredItems = ignoredItems.filter(x => x.id !== ignoredId);
+  const badge = document.getElementById('tc-ignored');
+  if (ignoredItems.length > 0) {{
+    badge.textContent = ignoredItems.length;
+  }} else {{
+    badge.style.display = 'none';
+  }}
+  showToast('已恢复，下次加载未匹配列表时将重新出现');
+}}
 </script>
 </body>
 </html>"""
@@ -1833,6 +1931,10 @@ async def get_unmatched(request: Request, brand: str = ""):
     if not _require_admin(request):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     async with AsyncSessionLocal() as db:
+        # 获取全局忽略列表 key set
+        ignored_r = await db.execute(select(IgnoredRawName))
+        ignored_keys = {(r.source_slug, r.raw_name) for r in ignored_r.scalars().all()}
+
         q = select(UnmatchedItem).order_by(UnmatchedItem.id.desc())
         if brand:
             q = q.where(UnmatchedItem.raw_name.ilike(f"%{brand}%"))
@@ -1851,7 +1953,62 @@ async def get_unmatched(request: Request, brand: str = ""):
             "best_candidate": u.best_candidate,
         }
         for u in items
+        if (u.source_slug, u.raw_name) not in ignored_keys
     ]
+
+
+@router.post("/api/unmatched/{item_id}/ignore")
+async def ignore_unmatched(item_id: int, request: Request):
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(UnmatchedItem).where(UnmatchedItem.id == item_id))
+        item = r.scalar_one_or_none()
+        if not item:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        # 幂等：已存在则跳过
+        exists_r = await db.execute(
+            select(IgnoredRawName).where(
+                IgnoredRawName.source_slug == item.source_slug,
+                IgnoredRawName.raw_name    == item.raw_name,
+            )
+        )
+        if not exists_r.scalar_one_or_none():
+            db.add(IgnoredRawName(source_slug=item.source_slug, raw_name=item.raw_name))
+            await db.commit()
+    return {"ok": True}
+
+
+@router.get("/api/ignored")
+async def get_ignored(request: Request):
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(IgnoredRawName).order_by(IgnoredRawName.ignored_at.desc()))
+        items = r.scalars().all()
+    return [
+        {
+            "id":          i.id,
+            "source_slug": i.source_slug,
+            "raw_name":    i.raw_name,
+            "ignored_at":  i.ignored_at.isoformat(),
+        }
+        for i in items
+    ]
+
+
+@router.delete("/api/ignored/{ignored_id}")
+async def restore_ignored(ignored_id: int, request: Request):
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(IgnoredRawName).where(IgnoredRawName.id == ignored_id))
+        item = r.scalar_one_or_none()
+        if not item:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        await db.delete(item)
+        await db.commit()
+    return {"ok": True}
 
 
 @router.post("/api/brands/{brand_id}/cigar-assignments")

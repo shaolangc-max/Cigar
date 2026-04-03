@@ -10,6 +10,7 @@ from .user import User, OAuthAccount, UserFavorite, UserPriceAlert, UserViewHist
 from .search_quota import SearchQuota
 from .scraper_run import ScraperRun, UnmatchedItem
 from .alias import ScraperNameAlias
+from .ignored_raw_name import IgnoredRawName
 
 __all__ = [
     "Base", "Brand", "Category", "Series", "Cigar",
@@ -18,4 +19,5 @@ __all__ = [
     "SearchQuota",
     "ScraperRun", "UnmatchedItem",
     "ScraperNameAlias",
+    "IgnoredRawName",
 ]
