@@ -86,6 +86,7 @@ class LcdhAmsterdamScraper(BaseScraper):
 
                             qty = _QTY_RE.search(name)
                             box_count = int(qty.group(1)) if qty else None
+                            in_stock = "out of stock" not in block.lower()
 
                             items.append(ScrapedItem(
                                 source_slug=self.source_slug,
@@ -95,7 +96,7 @@ class LcdhAmsterdamScraper(BaseScraper):
                                 price_box=price if (box_count and box_count > 1) else None,
                                 box_count=box_count,
                                 currency="EUR",
-                                in_stock=True,
+                                in_stock=in_stock,
                             ))
 
                         # 检查是否有下一页

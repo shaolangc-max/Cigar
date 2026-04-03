@@ -41,13 +41,20 @@ def _parse_listing(html: str) -> list[tuple[str, str, float]]:
     return results
 
 
-async def _fetch_box_count(client: httpx.AsyncClient, url: str) -> int | None:
+_OOS_RE = re.compile(r'缺货|售罄|暂无库存|out.of.stock|sold.out', re.I)
+
+
+async def _fetch_detail(client: httpx.AsyncClient, url: str) -> tuple[int | None, bool]:
+    """返回 (box_count, in_stock)"""
     try:
         r = await client.get(url)
-        m = re.search(r'規格\(支\).*?<span class="param-value">(\d+)</span>', r.text, re.DOTALL)
-        return int(m.group(1)) if m else None
+        html = r.text
+        box_m = re.search(r'規格\(支\).*?<span class="param-value">(\d+)</span>', html, re.DOTALL)
+        box_count = int(box_m.group(1)) if box_m else None
+        in_stock = not bool(_OOS_RE.search(html))
+        return box_count, in_stock
     except Exception:
-        return None
+        return None, True
 
 
 @register
@@ -63,7 +70,7 @@ class CigarHomeScraper(BaseScraper):
 
             async def _fetch_item(url: str, name: str, price: float) -> ScrapedItem:
                 async with sem:
-                    box_count = await _fetch_box_count(client, url)
+                    box_count, in_stock = await _fetch_detail(client, url)
                     return ScrapedItem(
                         source_slug  = self.source_slug,
                         raw_name     = name,
@@ -72,7 +79,7 @@ class CigarHomeScraper(BaseScraper):
                         price_box    = price,
                         box_count    = box_count,
                         currency     = "USD",
-                        in_stock     = True,
+                        in_stock     = in_stock,
                     )
 
             results = await asyncio.gather(*[_fetch_item(u, n, p) for u, n, p in listings])
