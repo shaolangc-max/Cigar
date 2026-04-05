@@ -160,9 +160,27 @@ async def _save_items(items) -> tuple[int, int, list[dict]]:
             for a in alias_result.scalars().all()
         }
 
+        # 加载该来源每支雪茄的最新历史价格，用于变化检测
+        from sqlalchemy import func as sqlfunc
+        latest_id_sub = (
+            select(sqlfunc.max(PriceHistory.id))
+            .where(PriceHistory.source_id == source.id)
+            .group_by(PriceHistory.cigar_id)
+            .scalar_subquery()
+        )
+        latest_hist_result = await db.execute(
+            select(PriceHistory).where(PriceHistory.id.in_(latest_id_sub))
+        )
+        last_prices: dict[int, tuple] = {
+            h.cigar_id: (h.price_single, h.price_box)
+            for h in latest_hist_result.scalars().all()
+        }
+
         now = datetime.now(timezone.utc)
         matched_count = 0
         unmatched: list[dict] = []
+        # 收集本次爬取每支雪茄的最终价格（后写覆盖前写，与 prices 表 upsert 行为一致）
+        final_prices: dict[int, tuple] = {}
 
         for item in items:
             cigar, score, best_candidate = best_match_with_aliases(
@@ -207,16 +225,20 @@ async def _save_items(items) -> tuple[int, int, list[dict]]:
                 },
             )
             await db.execute(stmt)
+            final_prices[cigar["id"]] = (item.price_single, item.price_box, item.currency)
 
-            # 追加历史
-            db.add(PriceHistory(
-                cigar_id=cigar["id"],
-                source_id=source.id,
-                price_single=item.price_single,
-                price_box=item.price_box,
-                currency=item.currency,
-                scraped_at=now,
-            ))
+        # 仅当价格与上次历史记录不同时才写入历史
+        for cigar_id, (price_single, price_box, currency) in final_prices.items():
+            prev = last_prices.get(cigar_id)
+            if prev is None or prev != (price_single, price_box):
+                db.add(PriceHistory(
+                    cigar_id=cigar_id,
+                    source_id=source.id,
+                    price_single=price_single,
+                    price_box=price_box,
+                    currency=currency,
+                    scraped_at=now,
+                ))
 
         await db.commit()
 

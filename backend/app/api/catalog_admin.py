@@ -798,19 +798,31 @@ async function catDrop(targetCatId, event) {{
     const vitola     = (document.getElementById(`um-vt-${{uid}}`)?.value  || '').trim() || null;
     const length_mm  = parseFloat(document.getElementById(`um-len-${{uid}}`)?.value) || null;
     const ring_gauge = parseFloat(document.getElementById(`um-rg-${{uid}}`)?.value)  || null;
-    const r = await fetch(`/admin-tools/catalog/api/unmatched/${{uid}}/quick-create`, {{
-      method: 'POST',
-      headers: {{'Content-Type': 'application/json'}},
-      body: JSON.stringify({{category_id: targetCatId, vitola, length_mm, ring_gauge}}),
-    }});
-    if (!r.ok) {{ showToast('创建失败', false); return; }}
-    const row = document.getElementById(`um-${{uid}}`);
-    if (row) row.remove();
-    const idx = unmatched.findIndex(x => x.id === uid);
-    if (idx !== -1) unmatched.splice(idx, 1);
-    document.getElementById('tc-unmatched').textContent = unmatched.length;
-    await loadCigars();
-    showToast('✓ 已创建并分类');
+    try {{
+      const r = await fetch(`/admin-tools/catalog/api/unmatched/${{uid}}/quick-create`, {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{category_id: targetCatId, vitola, length_mm, ring_gauge}}),
+      }});
+      if (!r.ok) {{
+        const data = await r.json().catch(() => ({{}}));
+        showToast('创建失败：' + (data.error || r.status), false);
+        return;
+      }}
+      const data = await r.json();
+      const row = document.getElementById(`um-${{uid}}`);
+      if (row) row.remove();
+      const idx = unmatched.findIndex(x => x.id === uid);
+      if (idx !== -1) unmatched.splice(idx, 1);
+      document.getElementById('tc-unmatched').textContent = unmatched.length;
+      await loadCigars();
+      const msg = data.auto_matched > 0
+        ? `✓ 已创建（自动匹配 ${{data.auto_matched}} 条）`
+        : '✓ 已创建并分类';
+      showToast(msg);
+    }} catch(e) {{
+      showToast('网络错误：' + e.message, false);
+    }}
     return;
   }}
 
@@ -1100,7 +1112,9 @@ function cancelCatForm() {{
   document.getElementById('cat-form-card').style.display = 'none';
 }}
 
+let _catSaving = false;
 async function saveCategory() {{
+  if (_catSaving) return;
   const name = document.getElementById('cat-name').value.trim();
   if (!name) {{ showToast('名称不能为空', false); return; }}
   const parent_id  = document.getElementById('cat-parent').value || null;
@@ -1110,8 +1124,13 @@ async function saveCategory() {{
     ? `/admin-tools/catalog/api/categories/${{editingCatId}}`
     : `/admin-tools/catalog/api/brands/${{currentBrandId}}/categories`;
   const method = editingCatId ? 'PATCH' : 'POST';
-  const r = await fetch(url, {{ method, headers: {{'Content-Type':'application/json'}}, body: JSON.stringify(body) }});
-  if (!r.ok) {{ showToast('保存失败: ' + (await r.text()), false); return; }}
+  _catSaving = true;
+  try {{
+    const r = await fetch(url, {{ method, headers: {{'Content-Type':'application/json'}}, body: JSON.stringify(body) }});
+    if (!r.ok) {{ showToast('保存失败: ' + (await r.text()), false); return; }}
+  }} finally {{
+    _catSaving = false;
+  }}
   showToast('分类已保存');
   const wasNew = !editingCatId;
   const savedParentId = body.parent_id ?? null;
@@ -1585,7 +1604,7 @@ async function quickCreateFromUnmatched(unmatchedId, catId, selectEl) {{
     }});
     const data = await r.json();
 
-    if (r.status === 404) {{
+    if (r.status === 404 && data.error === 'unmatched item not found') {{
       // 已被 batch-match 自动处理，静默移除
       _removeRow();
       _umCreating.delete(unmatchedId);
@@ -2028,6 +2047,7 @@ async def batch_save_assignments(brand_id: int, request: Request):
 
 @router.post("/api/brands/{brand_id}/categories")
 async def create_category(brand_id: int, request: Request):
+    from sqlalchemy.exc import IntegrityError
     if not _require_admin(request):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     data = await request.json()
@@ -2036,14 +2056,20 @@ async def create_category(brand_id: int, request: Request):
         return JSONResponse({"error": "name required"}, status_code=400)
     parent_id  = data.get("parent_id")
     sort_order = int(data.get("sort_order") or 0)
-    async with AsyncSessionLocal() as db:
-        slug = await _unique_cat_slug(db, _slugify(name))
-        cat  = Category(brand_id=brand_id, parent_id=parent_id,
-                        name=name, slug=slug, sort_order=sort_order)
-        db.add(cat)
-        await db.commit()
-        await db.refresh(cat)
-    return {"id": cat.id, "slug": cat.slug}
+    for attempt in range(3):
+        try:
+            async with AsyncSessionLocal() as db:
+                slug = await _unique_cat_slug(db, _slugify(name))
+                cat  = Category(brand_id=brand_id, parent_id=parent_id,
+                                name=name, slug=slug, sort_order=sort_order)
+                db.add(cat)
+                await db.commit()
+                await db.refresh(cat)
+            return {"id": cat.id, "slug": cat.slug}
+        except IntegrityError:
+            if attempt == 2:
+                return JSONResponse({"error": "slug conflict, please retry"}, status_code=409)
+            continue
 
 
 @router.patch("/api/categories/{cat_id}")
@@ -2171,7 +2197,7 @@ async def quick_create_from_unmatched(item_id: int, request: Request):
         r2 = await db.execute(select(Category).where(Category.id == category_id))
         cat = r2.scalar_one_or_none()
         if not cat:
-            return JSONResponse({"error": "category not found"}, status_code=404)
+            return JSONResponse({"error": "category not found"}, status_code=422)
 
         # Find dominant series_id for this category
         series_row = await db.execute(
@@ -2196,7 +2222,7 @@ async def quick_create_from_unmatched(item_id: int, request: Request):
             )
             sr_obj = sr.scalar_one_or_none()
             if not sr_obj:
-                return JSONResponse({"error": "no series found for brand"}, status_code=400)
+                return JSONResponse({"error": "no series found for brand"}, status_code=422)
             series_id = sr_obj.id
 
         # ── 查重：同品牌下是否已存在同名雪茄 ────────────────────────
