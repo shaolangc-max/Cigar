@@ -4,16 +4,20 @@ import { useState } from "react";
 import Link from "next/link";
 import { apiLogin, apiMe, saveToken, saveUser } from "@/lib/auth";
 
-const GOOGLE_AUTH_URL =
-  "https://accounts.google.com/o/oauth2/v2/auth?" +
-  new URLSearchParams({
-    client_id:     "484821651625-pdm2svo3afsvk5jkivcscee27fb6vgju.apps.googleusercontent.com",
-    redirect_uri:  "http://localhost:3001/auth/google-callback",
-    response_type: "code",
-    scope:         "openid email profile",
-    access_type:   "online",
-    hl:            "zh-CN",
-  }).toString();
+function buildGoogleAuthUrl() {
+  const redirectUri = `${window.location.origin}/auth/google-callback`;
+  return (
+    "https://accounts.google.com/o/oauth2/v2/auth?" +
+    new URLSearchParams({
+      client_id:     "484821651625-pdm2svo3afsvk5jkivcscee27fb6vgju.apps.googleusercontent.com",
+      redirect_uri:  redirectUri,
+      response_type: "code",
+      scope:         "openid email profile",
+      access_type:   "online",
+      hl:            "zh-CN",
+    }).toString()
+  );
+}
 
 export default function LoginPage() {
   const [email, setEmail]       = useState("");
@@ -50,7 +54,7 @@ export default function LoginPage() {
       {/* Google 登录按钮 */}
       <button
         type="button"
-        onClick={() => { window.location.href = GOOGLE_AUTH_URL; }}
+        onClick={() => { window.location.href = buildGoogleAuthUrl(); }}
         style={{
           display: "flex",
           alignItems: "center",

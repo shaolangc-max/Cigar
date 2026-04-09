@@ -31,7 +31,7 @@ function GoogleCallbackInner() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         code,
-        redirect_uri: "http://localhost:3001/auth/google-callback",
+        redirect_uri: `${window.location.origin}/auth/google-callback`,
       }),
     })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
