@@ -9,9 +9,10 @@ from app.scrapers.registry import register
 
 @register
 class TabashopScraper(OdooShopScraper):
-    source_slug    = "tabashop"
-    base_url       = "https://tabashop.ch"
-    category_id    = 480
-    currency       = "CHF"
-    lang_prefix    = "en_US"
-    category_slug  = "cigares-cubains"
+    source_slug             = "tabashop"
+    base_url                = "https://tabashop.ch"
+    category_id             = 480
+    currency                = "CHF"
+    lang_prefix             = "en_US"
+    category_slug           = "cigares-cubains"
+    fetch_detail_for_count  = True

@@ -32,6 +32,12 @@ _URL_QTY_RE  = re.compile(r"-(\d+)(?:\.html)?$")
 # PrestaShop detail page: description_short 是 HTML 实体编码，如
 # description_short&quot;:&quot;&lt;p&gt;25 Cohiba ...
 _DESC_QTY_RE = re.compile(r'description_short&quot;:&quot;(?:&lt;[^&]*&gt;)?(\d+)\s', re.I)
+# 产品属性表中 "Einheit</dt>...<dd...>10</dd>"
+_ATTR_QTY_RE = re.compile(
+    r'(?:Einheit|Einheiten|Quantity|Anzahl).*?class="value">(\d+)</dd>'
+    r'|(\d+)\s*(?:Zigarren|cigars?|pcs|stück)',
+    re.DOTALL | re.I,
+)
 _KNOWN_SIZES = {3, 5, 10, 12, 15, 20, 25, 40, 50}
 
 
@@ -114,6 +120,13 @@ class PortmannTabakScraper(BaseScraper):
                                 n = int(dm.group(1))
                                 if n in _KNOWN_SIZES:
                                     box_count = n
+                            # 回退：从产品属性（Einheit、Anzahl 等）或 "N Zigarren" 提取
+                            if box_count is None:
+                                for am in _ATTR_QTY_RE.finditer(dp.text):
+                                    n = int(am.group(1) or am.group(2))
+                                    if n in _KNOWN_SIZES:
+                                        box_count = n
+                                        break
                         except Exception:
                             pass
                         await asyncio.sleep(0.2)

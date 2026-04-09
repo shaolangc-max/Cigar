@@ -57,6 +57,12 @@ _CART_RE  = re.compile(r'btn.?cart|Purchase|Warenkorb|panier|Add to Cart', re.I)
 _QTY_RE      = re.compile(r"(\d+)\s*(?:er|x)?\s*(?:kiste|schachtel|cigars?|stück|box|pack|pcs)", re.I)
 _URL_QTY_RE  = re.compile(r"-(\d+)(?:\?|$)")
 _KNOWN_SIZES = {3, 5, 10, 12, 15, 20, 25, 40, 50}
+# 详情页数量提取：匹配 "Coffret de 10", "Box of 10", "10 cigars" 等格式
+_DETAIL_COUNT_RE = re.compile(
+    r"(?:coffret\s+de|boite\s+de|box\s+of|kiste\s+von|schachtel\s+von)\s*(\d+)"
+    r"|(\d+)\s*(?:er|x)?\s*(?:kiste|schachtel|cigars?|stück|box|pack|pcs)",
+    re.I,
+)
 
 # 详情页规格变体链接（#packaging_products 区块）
 _PKG_VARIANT_RE = re.compile(
@@ -103,6 +109,7 @@ class OdooShopScraper(BaseScraper):
     lang_prefix:              str  = ""    # URL 语言前缀, 如 "en_US"
     category_slug:            str  = ""    # 分类名前缀, 如 "cigares-cubains"
     fetch_packaging_variants: bool = False # 是否抓取详情页的其他规格变体
+    fetch_detail_for_count:   bool = False # 从详情页提取数量（listing 无法识别时）
 
     def _category_url(self, page: int) -> str:
         lang = f"/{self.lang_prefix}" if self.lang_prefix else ""
@@ -158,6 +165,19 @@ class OdooShopScraper(BaseScraper):
                     # 名字未匹配到数量时，从 URL 回退提取
                     if box_count is None:
                         box_count = _count_from_url(product_url)
+
+                    # 仍未知时：取详情页，从变体名称或产品描述提取数量
+                    if box_count is None and self.fetch_detail_for_count:
+                        try:
+                            dp = await client.get(product_url.split("?")[0])
+                            for m in _DETAIL_COUNT_RE.finditer(dp.text):
+                                n = int(m.group(1) or m.group(2))
+                                if n in _KNOWN_SIZES:
+                                    box_count = n
+                                    break
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.2)
 
                     items.append(ScrapedItem(
                         source_slug  = self.source_slug,

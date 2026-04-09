@@ -7,9 +7,14 @@
   - 查看并处理未匹配条目（按品牌过滤）
   - 雪茄行显示各来源网站小图标链接
 """
+import html as html_mod
+import os
 import re
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.db import AsyncSessionLocal
@@ -19,7 +24,7 @@ from app.models.cigar import Cigar
 from app.models.price import Price
 from app.models.series import Series
 from app.models.source import Source
-from app.models.scraper_run import UnmatchedItem
+from app.models.scraper_run import ScraperRun, UnmatchedItem
 from app.models.alias import ScraperNameAlias
 from app.models.ignored_raw_name import IgnoredRawName
 from app.models.price import Price, PriceHistory
@@ -27,6 +32,8 @@ from app.scrapers.matcher import similarity
 from sqlalchemy import select, func, text as _sql
 
 router = APIRouter(prefix="/admin-tools/catalog", tags=["catalog-admin"])
+
+UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "/mnt/nvme/workspaces/cigar/uploads"))
 
 
 def _require_admin(request: Request) -> bool:
@@ -200,6 +207,8 @@ async def catalog_page(request: Request):
                    border-radius: 4px; transition: opacity .15s; flex-shrink: 0; }}
   .cigar-row:hover .cigar-del-btn {{ opacity: 1; }}
   .cigar-del-btn:hover {{ background: #fee2e2; color: #dc2626; }}
+  .price-unlink-btn {{ opacity: 0; transition: opacity .15s; }}
+  tr:hover .price-unlink-btn {{ opacity: 1; }}
   .cigar-row {{ display: flex; align-items: center; gap: 8px; padding: 9px 12px;
                 border-radius: 10px; border: 1px solid #e0e0e5; margin-bottom: 6px;
                 background: #fff; transition: background .2s; }}
@@ -213,6 +222,14 @@ async def catalog_page(request: Request):
   .cigar-name .cv:hover {{ color: #0071e3; }}
   .edit-hint {{ font-size: 10px; opacity: 0; transition: opacity .15s; }}
   .cigar-name .cv:hover .edit-hint {{ opacity: 1; }}
+  .detail-meta {{ cursor: pointer; }}
+  .detail-meta:hover .edit-hint {{ opacity: 1; }}
+  .dp-desc {{ font-size:13px;color:#555;cursor:pointer;line-height:1.6;padding:4px 0;min-height:28px; }}
+  .dp-desc:hover .edit-hint {{ opacity: 1; }}
+  .dp-img-upload-btn {{ aspect-ratio:4/3;border:2px dashed #d0d0d5;border-radius:8px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+    cursor:pointer;background:#fafafa;width:100%; }}
+  .dp-img-upload-btn:hover {{ border-color:#0071e3;background:#f0f7ff; }}
   .specs-inputs {{ display: inline-flex; align-items: center; gap: 4px; }}
   .specs-inputs input {{ width: 64px; font-size: 11px; padding: 2px 5px;
                          border: 1px solid #0071e3; border-radius: 5px;
@@ -395,13 +412,7 @@ async def catalog_page(request: Request):
   </div>
 </div>
 
-<!-- Floating save bar -->
-<div class="save-bar" id="save-bar">
-  <span class="dot"></span>
-  <span class="info" id="save-info">有 0 项雪茄分配未保存</span>
-  <button class="btn btn-ghost btn-sm" onclick="discardChanges()">放弃</button>
-  <button class="btn btn-primary" onclick="saveAllChanges()">保存</button>
-</div>
+<!-- Floating save bar removed (auto-save) -->
 
 <div id="toast"></div>
 
@@ -411,7 +422,6 @@ let currentBrandName = '';
 let categories  = [];
 let cigars      = [];
 let unmatched   = [];
-let pendingChanges = new Map();  // cigar_id → {{oldCatId, newCatId}}
 let activeTab   = 'cigars';
 let collapsedCats   = new Set();  // category ids that are collapsed in the tree
 let expandedCigars  = new Set();  // cigar ids expanded in the tree (showing sources)
@@ -459,12 +469,15 @@ async function loadBrand(value, brandName) {{
   leftPanel.style.opacity  = '1';
   leftPanel.style.pointerEvents = '';
   newCatBtn.style.display  = '';
-  pendingChanges.clear();
-  updateSaveBar();
   _treeInitialized = false;  // reset so new brand gets fresh collapsed state
-  await loadCategories();
-  await loadCigars();
-  await loadUnmatched(brandName);
+  try {{
+    await loadCategories();
+    await loadCigars();
+    await loadUnmatched(brandName);
+  }} catch(err) {{
+    showToast('加载失败: ' + err.message, false);
+    console.error('loadBrand error:', err);
+  }}
 }}
 
 // ── Categories ────────────────────────────────────────────────────────────────
@@ -482,12 +495,7 @@ async function loadCategories() {{
 }}
 
 function countCigarsInCat(catId) {{
-  let count = cigars.filter(c => c.category_id === catId).length;
-  // factor in pending changes
-  pendingChanges.forEach(v => {{
-    if (v.newCatId === catId && v.oldCatId !== catId) count++;
-    if (v.oldCatId === catId && v.newCatId !== catId) count--;
-  }});
+  const count = cigars.filter(c => c.category_id === catId).length;
   const childCats = categories.filter(c => c.parent_id === catId);
   return count + childCats.reduce((s, ch) => s + countCigarsInCat(ch.id), 0);
 }}
@@ -680,8 +688,8 @@ async function treeCigarDrop(catId, event) {{
     const targetId = parseInt(el.dataset.cigarId);
     if (fromId === targetId) return;
 
-    // If cross-category, update the cigar's category first (stage it)
-    if (fromCat !== catId) stageCigarChange(fromId, String(catId));
+    // If cross-category, update the cigar's category first (save immediately)
+    if (fromCat !== catId) await stageCigarChange(fromId, String(catId));
 
     // Build new order for this category (use effective catId to reflect pending)
     const catCigars = cigars
@@ -778,8 +786,9 @@ async function catDrop(targetCatId, event) {{
 
   // ── Cigar (right panel) → Category drop ───────────────
   if (dragCigarId !== null) {{
-    stageCigarChange(dragCigarId, String(targetCatId));
+    const cid = dragCigarId;
     dragCigarId = null;
+    await stageCigarChange(cid, String(targetCatId));
     return;
   }}
 
@@ -787,7 +796,7 @@ async function catDrop(targetCatId, event) {{
   if (dragTreeCigarId !== null) {{
     const cid = dragTreeCigarId;
     dragTreeCigarId = null; dragTreeCigarCat = null;
-    stageCigarChange(cid, String(targetCatId));
+    await stageCigarChange(cid, String(targetCatId));
     return;
   }}
 
@@ -886,11 +895,12 @@ function toggleCat(catId, event) {{
 }}
 
 async function deleteCigar(cigarId, cigarName, event) {{
-  event.stopPropagation();
+  if (event) event.stopPropagation();
   if (!confirm(`确认删除「${{cigarName}}」？将同时删除所有价格记录和别名，无法恢复。`)) return;
   const r = await fetch(`/admin-tools/catalog/api/cigars/${{cigarId}}`, {{ method: 'DELETE' }});
   if (!r.ok) {{ showToast('删除失败', false); return; }}
   showToast('已删除');
+  closeDetail();
   await loadCigars();
 }}
 
@@ -955,12 +965,19 @@ function renderDetailPanel(cigar, aliases) {{
         style="margin-left:4px;padding:1px 5px;font-size:10px;cursor:pointer;
                border:1px solid #d1d5db;border-radius:3px;background:#f9fafb;color:#374151;
                line-height:1.4;vertical-align:middle">▶</button>`;
-    return `<tr>
+    const unlinkBtn = `<button
+        class="price-unlink-btn"
+        onclick="sendToUnmatched(${{s.price_id}}, this)"
+        title="移入未匹配（删除该价格数据和别名）"
+        style="margin-left:20px;padding:1px 6px;font-size:11px;cursor:pointer;
+               border:1px solid #fca5a5;border-radius:3px;background:#fff5f5;color:#dc2626;
+               line-height:1.4;vertical-align:middle">↩</button>`;
+    return `<tr data-price-id="${{s.price_id}}">
       <td>${{dot}} ${{s.name}}${{triggerBtn}}</td>
       <td>${{px}}</td>
       <td>${{bx}}</td>
       <td style="color:#aaa;font-size:11px">${{s.scraped_at || ''}}</td>
-      <td><span style="font-size:10px;color:#bbb">#${{s.price_id}}</span> ${{link}}</td>
+      <td><span style="font-size:10px;color:#bbb">#${{s.price_id}}</span> ${{link}}${{unlinkBtn}}</td>
     </tr>`;
   }}).join('');
 
@@ -976,12 +993,52 @@ function renderDetailPanel(cigar, aliases) {{
   if (cigar.vitola)     specParts.push(cigar.vitola);
   if (cigar.length_mm)  specParts.push(cigar.length_mm + ' mm');
   if (cigar.ring_gauge) specParts.push('× ' + cigar.ring_gauge);
+  const specText = specParts.join(' · ');
 
   document.getElementById('detail-content').innerHTML = `
-    <div class="detail-title">${{cigar.name}}
-      <span style="font-size:13px;font-weight:400;color:#aaa">#${{cigar.id}}</span>
+    <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">
+      <div class="detail-title" id="dp-name-${{cigar.id}}" style="cursor:pointer;flex:1;margin-bottom:0"
+           onclick="editDetailName(${{cigar.id}})" title="点击修改名称">
+        ${{cigar.name}}
+        <span style="font-size:13px;font-weight:400;color:#aaa">#${{cigar.id}}</span>
+        <span class="edit-hint">✎</span>
+      </div>
+      <button onclick="deleteCigar(${{cigar.id}}, '${{cigar.name.replace(/'/g, "\\'")}}', null)"
+              title="删除此雪茄"
+              style="flex-shrink:0;padding:2px 8px;font-size:12px;cursor:pointer;
+                     border:1px solid #fca5a5;border-radius:5px;background:#fff5f5;
+                     color:#dc2626;white-space:nowrap">🗑 删除</button>
     </div>
-    <div class="detail-meta">${{specParts.join(' · ') || '暂无规格信息'}}</div>
+    <div class="detail-meta" id="dp-specs-${{cigar.id}}"
+         onclick="editDetailSpecs(${{cigar.id}})" title="点击编辑规格">
+      ${{specText
+        ? specText + ` <span class="edit-hint">✎</span>`
+        : `<span style="color:#0071e3">＋ 添加规格</span>`
+      }}
+    </div>
+    <div class="detail-section">说明</div>
+    <div class="dp-desc" id="dp-desc-${{cigar.id}}"
+         onclick="editDetailDesc(${{cigar.id}})" title="点击编辑说明">
+      ${{cigar.description
+        ? cigar.description.replace(/\\n/g,'<br>') + ' <span class="edit-hint">✎</span>'
+        : '<span style="color:#0071e3">＋ 添加说明</span>'
+      }}
+    </div>
+    <div class="detail-section">图片</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-top:4px;align-items:start">
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#aaa;text-transform:uppercase;margin-bottom:6px">单只照片</div>
+        <div id="dp-imgslot-${{cigar.id}}-single"></div>
+        <input type="file" accept="image/*" id="dp-file-${{cigar.id}}-single" style="display:none"
+               onchange="uploadImage(${{cigar.id}},'single',this)">
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#aaa;text-transform:uppercase;margin-bottom:6px">成盒照片</div>
+        <div id="dp-imgslot-${{cigar.id}}-box"></div>
+        <input type="file" accept="image/*" id="dp-file-${{cigar.id}}-box" style="display:none"
+               onchange="uploadImage(${{cigar.id}},'box',this)">
+      </div>
+    </div>
     ${{cigar.sources && cigar.sources.length ? `
     <div class="detail-section">价格来源</div>
     <table class="detail-price-table">
@@ -991,6 +1048,7 @@ function renderDetailPanel(cigar, aliases) {{
     <div class="detail-section">爬虫别名</div>
     <div>${{aliasRows}}</div>
   `;
+  initImageSlots(cigar.id, cigar.image_single_url, cigar.image_box_url);
 }}
 
 function scrollToCigar(cigarId) {{
@@ -1247,8 +1305,7 @@ function getCatMap() {{
 }}
 
 function effectiveCatId(cigar) {{
-  // return pending value if exists, else original
-  return pendingChanges.has(cigar.id) ? pendingChanges.get(cigar.id).newCatId : cigar.category_id;
+  return cigar.category_id;
 }}
 
 function filterCigars() {{
@@ -1272,7 +1329,7 @@ function renderCigars(list, catMap) {{
   el.innerHTML = list.map(c => {{
     const effCat   = effectiveCatId(c);
     const cat      = effCat ? catMap[effCat] : null;
-    const isPending = pendingChanges.has(c.id);
+
     const tagCls   = cat ? 'ctag has' : 'ctag none';
     const tagText  = cat ? cat.name : '未分类';
 
@@ -1294,7 +1351,7 @@ function renderCigars(list, catMap) {{
     const specsLine = `<div class="cv" id="specs-${{c.id}}" onclick="editSpecs(${{c.id}})"
         title="点击编辑长度/环径">${{specText}} <span class="edit-hint">✎</span></div>`;
 
-    return `<div class="cigar-row${{isPending ? ' pending' : ''}}" id="cr-${{c.id}}"
+    return `<div class="cigar-row" id="cr-${{c.id}}"
       draggable="false"
       ondragstart="cigarDragStart(${{c.id}},event)"
       ondragend="cigarDragEnd(event);this.draggable=false">
@@ -1302,8 +1359,8 @@ function renderCigars(list, catMap) {{
       <div class="cigar-name">
         <div class="cn">${{c.name}} <span style="font-size:11px;color:#aaa;font-weight:400">#${{c.id}}</span></div>
         ${{specsLine}}
+        ${{srcHtml ? `<div class="source-links" style="margin-top:4px">${{srcHtml}}</div>` : ''}}
       </div>
-      <div class="source-links">${{srcHtml}}</div>
       <span class="${{tagCls}}" id="ct-${{c.id}}">${{tagText}}</span>
       <select class="cat-select" id="sel-${{c.id}}" onchange="stageCigarChange(${{c.id}}, this.value)">
         ${{selOpts}}
@@ -1329,94 +1386,27 @@ function buildCatSelectOpts(selectedCatId) {{
   return html;
 }}
 
-// ── Staging ───────────────────────────────────────────────────────────────────
-function stageCigarChange(cigarId, newCatIdStr) {{
-  const newCatId  = newCatIdStr ? parseInt(newCatIdStr) : null;
-  const cigar     = cigars.find(c => c.id === cigarId);
-  if (!cigar) return;
-  const original  = cigar.category_id;
+// ── Auto-save cigar category assignment ──────────────────────────────────────
+async function stageCigarChange(cigarId, newCatIdStr) {{
+  const newCatId = newCatIdStr ? parseInt(newCatIdStr) : null;
+  const cigar    = cigars.find(c => c.id === cigarId);
+  if (!cigar || newCatId === cigar.category_id) return;
 
-  if (pendingChanges.has(cigarId)) {{
-    const existing = pendingChanges.get(cigarId);
-    if (newCatId === existing.oldCatId) {{
-      pendingChanges.delete(cigarId);  // reverted to original
-    }} else {{
-      existing.newCatId = newCatId;
-    }}
-  }} else {{
-    if (newCatId !== original) {{
-      pendingChanges.set(cigarId, {{ oldCatId: original, newCatId }});
-    }}
-  }}
-
-  // Update row visuals
-  const row = document.getElementById(`cr-${{cigarId}}`);
-  if (row) row.className = 'cigar-row' + (pendingChanges.has(cigarId) ? ' pending' : '');
-
-  // Update tag
-  const catMap = getCatMap();
-  const tag = document.getElementById(`ct-${{cigarId}}`);
-  if (tag) {{
-    const cat = newCatId ? catMap[newCatId] : null;
-    tag.textContent = cat ? cat.name : '未分类';
-    tag.className = cat ? 'ctag has' : 'ctag none';
-  }}
-
-  updateSaveBar();
-  renderTree();
-}}
-
-function updateSaveBar() {{
-  const bar  = document.getElementById('save-bar');
-  const info = document.getElementById('save-info');
-  const n    = pendingChanges.size;
-  info.textContent = `有 ${{n}} 项雪茄分配未保存`;
-  bar.className = 'save-bar' + (n > 0 ? ' visible' : '');
-}}
-
-async function saveAllChanges() {{
-  if (!pendingChanges.size) return;
-  const payload = [];
-  pendingChanges.forEach((v, cigarId) => {{
-    payload.push({{ cigar_id: cigarId, category_id: v.newCatId }});
-  }});
   const r = await fetch(`/admin-tools/catalog/api/brands/${{currentBrandId}}/cigar-assignments`, {{
     method: 'POST',
     headers: {{ 'Content-Type': 'application/json' }},
-    body: JSON.stringify(payload),
+    body: JSON.stringify([{{ cigar_id: cigarId, category_id: newCatId }}]),
   }});
   if (!r.ok) {{ showToast('保存失败', false); return; }}
-  // Commit pending to cigar local data
-  pendingChanges.forEach((v, cigarId) => {{
-    const c = cigars.find(x => x.id === cigarId);
-    if (c) c.category_id = v.newCatId;
-  }});
-  pendingChanges.clear();
-  updateSaveBar();
+
+  cigar.category_id = newCatId;
+  const catMap = getCatMap();
+  const cat = newCatId ? catMap[newCatId] : null;
+  const tag = document.getElementById(`ct-${{cigarId}}`);
+  if (tag) {{ tag.textContent = cat ? cat.name : '未分类'; tag.className = cat ? 'ctag has' : 'ctag none'; }}
   filterCigars();
   renderTree();
-  showToast(`✓ 已保存 ${{payload.length}} 项`);
-}}
-
-function discardChanges() {{
-  // Restore select elements and tags to original values
-  pendingChanges.forEach((v, cigarId) => {{
-    const sel = document.getElementById(`sel-${{cigarId}}`);
-    if (sel) sel.value = v.oldCatId ?? '';
-    const tag = document.getElementById(`ct-${{cigarId}}`);
-    const catMap = getCatMap();
-    if (tag) {{
-      const cat = v.oldCatId ? catMap[v.oldCatId] : null;
-      tag.textContent = cat ? cat.name : '未分类';
-      tag.className = cat ? 'ctag has' : 'ctag none';
-    }}
-    const row = document.getElementById(`cr-${{cigarId}}`);
-    if (row) row.className = 'cigar-row';
-  }});
-  pendingChanges.clear();
-  updateSaveBar();
-  renderTree();
-  showToast('已放弃更改');
+  showToast('✓ 已保存');
 }}
 
 // ── Cigar specs inline edit ───────────────────────────────────────────────────
@@ -1476,6 +1466,283 @@ function renderSpecsDisplay(cigarId) {{
   if (cigar.length_mm)  parts.push(cigar.length_mm + ' mm');
   if (cigar.ring_gauge) parts.push('× ' + cigar.ring_gauge);
   el.innerHTML = (parts.join(' · ') || '—') + ' <span class="edit-hint">✎</span>';
+}}
+
+// ── Detail panel: send price to unmatched ─────────────────────────────────────
+async function sendToUnmatched(priceId, btn) {{
+  if (!confirm('将该价格记录移入未匹配？\\n将同时删除价格数据和对应别名，可在"未匹配条目"中重新归属。')) return;
+  btn.disabled = true;
+  btn.textContent = '…';
+  const r = await fetch(`/admin-tools/catalog/api/prices/${{priceId}}/send-to-unmatched`, {{
+    method: 'POST',
+  }});
+  if (!r.ok) {{
+    showToast('操作失败', false);
+    btn.disabled = false;
+    btn.textContent = '↩';
+    return;
+  }}
+  const data = await r.json();
+  // 从 detail panel 价格表中移除该行
+  const tr = document.querySelector(`tr[data-price-id="${{priceId}}"]`);
+  if (tr) tr.remove();
+  // 刷新未匹配计数
+  const tcEl = document.getElementById('tc-unmatched');
+  if (tcEl) tcEl.textContent = parseInt(tcEl.textContent || '0') + 1;
+  showToast(`✓ 已移入未匹配：${{data.raw_name}}`);
+}}
+
+// ── Detail panel: name & specs edit ──────────────────────────────────────────
+function editDetailName(cigarId) {{
+  const cigar = cigars.find(c => c.id === cigarId);
+  const el = document.getElementById(`dp-name-${{cigarId}}`);
+  if (!cigar || !el || el.querySelector('input')) return;
+  el.style.cursor = 'default';
+  el.onclick = null;
+  const escaped = cigar.name.replace(/"/g, '&quot;');
+  el.innerHTML = `
+    <input id="dp-ni-${{cigarId}}" type="text" value="${{escaped}}"
+           style="font-size:16px;font-weight:700;padding:2px 6px;border:1px solid #0071e3;
+                  border-radius:6px;outline:none;width:calc(100% - 90px)">
+    <button onclick="saveDetailName(${{cigarId}})"
+            style="margin-left:6px;padding:2px 10px;background:#0071e3;color:#fff;
+                   border:none;border-radius:5px;cursor:pointer;font-size:13px">✓</button>
+    <button onclick="cancelDetailName(${{cigarId}})"
+            style="margin-left:4px;padding:2px 8px;border:1px solid #ccc;
+                   background:#fff;border-radius:5px;cursor:pointer;font-size:13px">✕</button>`;
+  const inp = document.getElementById(`dp-ni-${{cigarId}}`);
+  if (inp) {{ inp.focus(); inp.select(); }}
+  inp?.addEventListener('keydown', e => {{
+    if (e.key === 'Enter')  saveDetailName(cigarId);
+    if (e.key === 'Escape') cancelDetailName(cigarId);
+  }});
+}}
+
+async function saveDetailName(cigarId) {{
+  const inp = document.getElementById(`dp-ni-${{cigarId}}`);
+  if (!inp) return;
+  const name = inp.value.trim();
+  if (!name) {{ showToast('名称不能为空', false); return; }}
+  const r = await fetch(`/admin-tools/catalog/api/cigars/${{cigarId}}/name`, {{
+    method: 'PATCH',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{name}}),
+  }});
+  if (!r.ok) {{ showToast('保存失败', false); return; }}
+  const cigar = cigars.find(c => c.id === cigarId);
+  if (cigar) cigar.name = name;
+  // 同步更新左侧列表行的名称
+  const cnEl = document.querySelector(`#cr-${{cigarId}} .cn`);
+  if (cnEl) cnEl.innerHTML =
+    `${{name}} <span style="font-size:11px;color:#aaa;font-weight:400">#${{cigarId}}</span>`;
+  renderDetailNameDisplay(cigarId);
+  showToast('✓ 已保存');
+}}
+
+function cancelDetailName(cigarId) {{ renderDetailNameDisplay(cigarId); }}
+
+function renderDetailNameDisplay(cigarId) {{
+  const cigar = cigars.find(c => c.id === cigarId);
+  const el = document.getElementById(`dp-name-${{cigarId}}`);
+  if (!cigar || !el) return;
+  el.style.cursor = 'pointer';
+  el.onclick = () => editDetailName(cigarId);
+  el.title = '点击修改名称';
+  el.innerHTML = `${{cigar.name}}
+    <span style="font-size:13px;font-weight:400;color:#aaa">#${{cigarId}}</span>
+    <span class="edit-hint">✎</span>`;
+}}
+
+function editDetailSpecs(cigarId) {{
+  const cigar = cigars.find(c => c.id === cigarId);
+  const el = document.getElementById(`dp-specs-${{cigarId}}`);
+  if (!cigar || !el || el.querySelector('input')) return;
+  el.innerHTML = `<span class="specs-inputs">
+    <input id="dp-vt-${{cigarId}}" type="text"
+           value="${{cigar.vitola ?? ''}}" placeholder="规格名" style="width:110px">
+    <input id="dp-len-${{cigarId}}" type="number" step="0.1" min="0"
+           value="${{cigar.length_mm ?? ''}}" placeholder="长度 mm">
+    <input id="dp-rg-${{cigarId}}" type="number" step="0.5" min="0"
+           value="${{cigar.ring_gauge ?? ''}}" placeholder="环径">
+    <button onclick="saveDetailSpecs(${{cigarId}})">✓</button>
+    <button onclick="cancelDetailSpecs(${{cigarId}})">✕</button>
+  </span>`;
+  const inp = document.getElementById(`dp-vt-${{cigarId}}`);
+  if (inp) inp.focus();
+  el.querySelectorAll('input').forEach(i => {{
+    i.addEventListener('keydown', e => {{
+      if (e.key === 'Enter')  saveDetailSpecs(cigarId);
+      if (e.key === 'Escape') cancelDetailSpecs(cigarId);
+    }});
+  }});
+}}
+
+async function saveDetailSpecs(cigarId) {{
+  const vtEl  = document.getElementById(`dp-vt-${{cigarId}}`);
+  const lenEl = document.getElementById(`dp-len-${{cigarId}}`);
+  const rgEl  = document.getElementById(`dp-rg-${{cigarId}}`);
+  if (!lenEl) return;
+  const vitola     = vtEl.value.trim() || null;
+  const length_mm  = lenEl.value !== '' ? parseFloat(lenEl.value) : null;
+  const ring_gauge = rgEl.value  !== '' ? parseFloat(rgEl.value)  : null;
+  const r = await fetch(`/admin-tools/catalog/api/cigars/${{cigarId}}/specs`, {{
+    method: 'PATCH',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{vitola, length_mm, ring_gauge}}),
+  }});
+  if (!r.ok) {{ showToast('保存失败', false); return; }}
+  const cigar = cigars.find(c => c.id === cigarId);
+  if (cigar) {{ cigar.vitola = vitola; cigar.length_mm = length_mm; cigar.ring_gauge = ring_gauge; }}
+  renderSpecsDisplay(cigarId);       // 同步左侧列表行
+  renderDetailSpecsDisplay(cigarId); // 刷新 detail panel 规格行
+  showToast('✓ 已保存');
+}}
+
+function cancelDetailSpecs(cigarId) {{ renderDetailSpecsDisplay(cigarId); }}
+
+function renderDetailSpecsDisplay(cigarId) {{
+  const cigar = cigars.find(c => c.id === cigarId);
+  const el = document.getElementById(`dp-specs-${{cigarId}}`);
+  if (!cigar || !el) return;
+  const parts = [];
+  if (cigar.vitola)     parts.push(cigar.vitola);
+  if (cigar.length_mm)  parts.push(cigar.length_mm + ' mm');
+  if (cigar.ring_gauge) parts.push('× ' + cigar.ring_gauge);
+  const specText = parts.join(' · ');
+  el.innerHTML = specText
+    ? specText + ` <span class="edit-hint">✎</span>`
+    : `<span style="color:#0071e3">＋ 添加规格</span>`;
+}}
+
+// ── Description ───────────────────────────────────────────────────────────────
+function editDetailDesc(cigarId) {{
+  const cigar = cigars.find(c => c.id === cigarId);
+  const el = document.getElementById(`dp-desc-${{cigarId}}`);
+  if (!cigar || !el || el.querySelector('textarea')) return;
+  el.onclick = null;
+  el.innerHTML = `<textarea id="dp-desc-ta-${{cigarId}}" rows="4"
+    style="width:100%;font-size:13px;line-height:1.6;padding:6px 8px;border:1px solid #0071e3;
+           border-radius:6px;resize:vertical;font-family:inherit;outline:none">${{cigar.description || ''}}</textarea>
+    <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:4px">
+      <button onclick="cancelDetailDesc(${{cigarId}})"
+              style="font-size:12px;padding:3px 10px;border-radius:5px;border:1px solid #d0d0d5;background:#fff;cursor:pointer">取消</button>
+      <button onclick="saveDetailDesc(${{cigarId}})"
+              style="font-size:12px;padding:3px 10px;border-radius:5px;border:none;background:#0071e3;color:#fff;cursor:pointer">保存</button>
+    </div>`;
+  document.getElementById(`dp-desc-ta-${{cigarId}}`).focus();
+}}
+
+async function saveDetailDesc(cigarId) {{
+  const ta = document.getElementById(`dp-desc-ta-${{cigarId}}`);
+  if (!ta) return;
+  const description = ta.value.trim();
+  const r = await fetch(`/admin-tools/catalog/api/cigars/${{cigarId}}/description`, {{
+    method: 'PATCH',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{description}}),
+  }});
+  if (!r.ok) {{ showToast('保存失败', false); return; }}
+  const cigar = cigars.find(c => c.id === cigarId);
+  if (cigar) cigar.description = description;
+  renderDetailDescDisplay(cigarId);
+  showToast('✓ 说明已保存');
+}}
+
+function cancelDetailDesc(cigarId) {{ renderDetailDescDisplay(cigarId); }}
+
+function renderDetailDescDisplay(cigarId) {{
+  const cigar = cigars.find(c => c.id === cigarId);
+  const el = document.getElementById(`dp-desc-${{cigarId}}`);
+  if (!cigar || !el) return;
+  el.onclick = () => editDetailDesc(cigarId);
+  el.innerHTML = cigar.description
+    ? cigar.description.replace(/\\n/g, '<br>') + ' <span class="edit-hint">✎</span>'
+    : '<span style="color:#0071e3">＋ 添加说明</span>';
+}}
+
+// ── Images ────────────────────────────────────────────────────────────────────
+function initImageSlots(cigarId, singleUrl, boxUrl) {{
+  renderImageSlot(cigarId, 'single', singleUrl);
+  renderImageSlot(cigarId, 'box', boxUrl);
+}}
+
+const _imgZoom = {{}};  // key: "cigarId-slot" → scale (1.0)
+
+function renderImageSlot(cigarId, slot, url) {{
+  const wrapper = document.getElementById('dp-imgslot-' + cigarId + '-' + slot);
+  if (!wrapper) return;
+  if (url) {{
+    const key   = cigarId + '-' + slot;
+    const scale = _imgZoom[key] || 1.0;
+    const pct   = Math.round(scale * 100);
+    wrapper.innerHTML =
+      '<div style="border-radius:8px;border:1px solid #e0e0e5;overflow:hidden">'
+      + '<div id="dp-imgbox-' + key + '" style="aspect-ratio:4/3;overflow:hidden;cursor:zoom-in;background:#f0f0f0;display:flex;align-items:center;justify-content:center">'
+      + '<img src="' + url + '" style="width:100%;height:100%;object-fit:contain;display:block;transform-origin:center center;transform:scale(' + scale + ');transition:transform .15s">'
+      + '</div>'
+      + '<div style="padding:5px 6px;background:#f9f9f9;border-top:1px solid #e0e0e5;display:flex;align-items:center;gap:6px">'
+      + '<button onclick="zoomImg(' + cigarId + ',\\'' + slot + '\\',-1)" style="width:22px;height:22px;border-radius:4px;border:1px solid #d0d0d5;background:#fff;cursor:pointer;font-size:14px;line-height:1;padding:0">−</button>'
+      + '<span id="dp-zoomlbl-' + key + '" style="font-size:11px;color:#888;min-width:34px;text-align:center">' + pct + '%</span>'
+      + '<button onclick="zoomImg(' + cigarId + ',\\'' + slot + '\\',+1)" style="width:22px;height:22px;border-radius:4px;border:1px solid #d0d0d5;background:#fff;cursor:pointer;font-size:14px;line-height:1;padding:0">＋</button>'
+      + '<button onclick="zoomImg(' + cigarId + ',\\'' + slot + '\\',0)" style="font-size:11px;padding:2px 6px;border-radius:4px;border:1px solid #d0d0d5;background:#fff;cursor:pointer;color:#555">重置</button>'
+      + '<span style="flex:1"></span>'
+      + '<button onclick="triggerUpload(' + cigarId + ',\\'' + slot + '\\')" style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #d0d0d5;background:#fff;cursor:pointer">替换</button>'
+      + '<button onclick="deleteImage(' + cigarId + ',\\'' + slot + '\\')" style="font-size:11px;padding:2px 8px;border-radius:4px;border:none;background:#fee2e2;color:#dc2626;cursor:pointer">删除</button>'
+      + '</div></div>';
+  }} else {{
+    wrapper.innerHTML =
+      '<div class="dp-img-upload-btn" onclick="triggerUpload(' + cigarId + ',\\'' + slot + '\\')">'
+      + '<span style="font-size:24px;color:#ccc">📷</span>'
+      + '<span style="font-size:11px;color:#aaa">点击上传</span>'
+      + '</div>';
+  }}
+}}
+
+function zoomImg(cigarId, slot, dir) {{
+  const key = cigarId + '-' + slot;
+  let scale = _imgZoom[key] || 1.0;
+  if (dir === 0) {{ scale = 1.0; }}
+  else           {{ scale = Math.min(4.0, Math.max(0.3, scale + dir * 0.2)); }}
+  scale = Math.round(scale * 10) / 10;
+  _imgZoom[key] = scale;
+  const box = document.getElementById('dp-imgbox-' + key);
+  const lbl = document.getElementById('dp-zoomlbl-' + key);
+  if (box) box.querySelector('img').style.transform = 'scale(' + scale + ')';
+  if (lbl) lbl.textContent = Math.round(scale * 100) + '%';
+  if (box) box.style.cursor = scale > 1 ? 'zoom-out' : 'zoom-in';
+}}
+
+function triggerUpload(cigarId, slot) {{
+  document.getElementById('dp-file-' + cigarId + '-' + slot).click();
+}}
+
+async function uploadImage(cigarId, slot, input) {{
+  const file = input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  const r = await fetch(`/admin-tools/catalog/api/cigars/${{cigarId}}/image/${{slot}}`, {{
+    method: 'POST', body: fd,
+  }});
+  input.value = '';
+  if (!r.ok) {{ showToast('上传失败', false); return; }}
+  const data = await r.json();
+  const cigar = cigars.find(c => c.id === cigarId);
+  if (cigar) cigar['image_' + slot + '_url'] = data.url;
+  renderImageSlot(cigarId, slot, data.url);
+  showToast('✓ 图片已上传');
+}}
+
+async function deleteImage(cigarId, slot) {{
+  if (!confirm('删除此图片？')) return;
+  const r = await fetch(`/admin-tools/catalog/api/cigars/${{cigarId}}/image/${{slot}}`, {{
+    method: 'DELETE',
+  }});
+  if (!r.ok) {{ showToast('删除失败', false); return; }}
+  const cigar = cigars.find(c => c.id === cigarId);
+  if (cigar) cigar['image_' + slot + '_url'] = null;
+  renderImageSlot(cigarId, slot, null);
+  showToast('✓ 图片已删除');
 }}
 
 // ── Unmatched ─────────────────────────────────────────────────────────────────
@@ -1919,15 +2186,18 @@ async def get_cigars(brand_id: int, request: Request):
 
     return [
         {
-            "id":          c.id,
-            "name":        c.name,
-            "slug":        c.slug,
-            "vitola":      c.vitola,
-            "length_mm":   c.length_mm,
-            "ring_gauge":  c.ring_gauge,
-            "category_id": c.category_id,
-            "sort_order":  c.sort_order,
-            "sources":     cigar_sources.get(c.id, []),
+            "id":               c.id,
+            "name":             c.name,
+            "slug":             c.slug,
+            "vitola":           c.vitola,
+            "length_mm":        c.length_mm,
+            "ring_gauge":       c.ring_gauge,
+            "category_id":      c.category_id,
+            "sort_order":       c.sort_order,
+            "description":      c.description,
+            "image_single_url": c.image_single_url,
+            "image_box_url":    c.image_box_url,
+            "sources":          cigar_sources.get(c.id, []),
         }
         for c, _ in rows
     ]
@@ -2133,9 +2403,106 @@ async def update_cigar_specs(cigar_id: int, request: Request):
     return {"ok": True}
 
 
+@router.post("/api/prices/{price_id}/send-to-unmatched")
+async def send_price_to_unmatched(price_id: int, request: Request):
+    """将一条价格记录移入未匹配：删除 price + 关联 alias，写入 unmatched_items。"""
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(Price).where(Price.id == price_id))
+        price = r.scalar_one_or_none()
+        if not price:
+            return JSONResponse({"error": "not found"}, status_code=404)
+
+        r = await db.execute(select(Source).where(Source.id == price.source_id))
+        source = r.scalar_one_or_none()
+        if not source:
+            return JSONResponse({"error": "source not found"}, status_code=404)
+
+        r = await db.execute(select(Cigar).where(Cigar.id == price.cigar_id))
+        cigar = r.scalar_one_or_none()
+        cigar_name = cigar.name if cigar else ""
+
+        # 优先从别名表取 raw_name，同时删除该别名
+        r = await db.execute(
+            select(ScraperNameAlias).where(
+                ScraperNameAlias.source_slug == source.slug,
+                ScraperNameAlias.cigar_id == price.cigar_id,
+            ).limit(1)
+        )
+        alias = r.scalar_one_or_none()
+        if alias:
+            raw_name = alias.raw_name
+            await db.delete(alias)
+        else:
+            # 从 product_url 末段构造 raw_name
+            url_tail = (price.product_url or "").rstrip("/").split("/")[-1]
+            url_tail = re.sub(r"\.html?$", "", url_tail)
+            raw_name = " ".join(w.capitalize() for w in url_tail.replace("-", " ").split()) or cigar_name
+
+        # 取最近一次该来源的爬虫 run（用于 FK），找不到则新建占位 run
+        r = await db.execute(
+            select(ScraperRun).where(ScraperRun.source_slug == source.slug)
+            .order_by(ScraperRun.id.desc()).limit(1)
+        )
+        run = r.scalar_one_or_none()
+        if not run:
+            run = ScraperRun(
+                source_slug=source.slug,
+                started_at=datetime.now(timezone.utc),
+                finished_at=datetime.now(timezone.utc),
+                status="manual",
+                items_scraped=0, items_matched=0, items_unmatched=0,
+            )
+            db.add(run)
+            await db.flush()
+
+        # 清理同来源同名的旧 unmatched 条目，避免重复
+        await db.execute(
+            _sql("DELETE FROM unmatched_items WHERE source_slug = :slug AND raw_name = :name"),
+            {"slug": source.slug, "name": raw_name},
+        )
+
+        db.add(UnmatchedItem(
+            run_id=run.id,
+            source_slug=source.slug,
+            raw_name=raw_name,
+            price_single=price.price_single,
+            price_box=price.price_box,
+            currency=price.currency,
+            product_url=price.product_url,
+            match_score=None,
+            best_candidate=cigar_name,
+        ))
+
+        await db.delete(price)
+        await db.commit()
+
+    return {"ok": True, "raw_name": raw_name}
+
+
+@router.patch("/api/cigars/{cigar_id}/name")
+async def update_cigar_name(cigar_id: int, request: Request):
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    data = await request.json()
+    name = (data.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(Cigar).where(Cigar.id == cigar_id))
+        cigar = r.scalar_one_or_none()
+        if not cigar:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        cigar.name = name
+        await db.commit()
+    return {"ok": True}
+
+
 @router.delete("/api/cigars/{cigar_id}")
 async def delete_cigar(cigar_id: int, request: Request):
-    """删除雪茄及其所有价格记录和别名（仅管理员）"""
+    """删除雪茄，并将其别名+价格数据转回 unmatched_items（仅管理员）"""
     if not _require_admin(request):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     async with AsyncSessionLocal() as db:
@@ -2143,7 +2510,45 @@ async def delete_cigar(cigar_id: int, request: Request):
         cigar = r.scalar_one_or_none()
         if not cigar:
             return JSONResponse({"error": "not found"}, status_code=404)
-        # Delete associated prices, price history, aliases
+
+        # 1. 取该雪茄的所有别名（source_slug + raw_name）
+        aliases_r = await db.execute(
+            select(ScraperNameAlias).where(ScraperNameAlias.cigar_id == cigar_id)
+        )
+        aliases = aliases_r.scalars().all()
+
+        # 2. 取该雪茄的所有价格，建立 source_slug → Price 映射
+        prices_r = await db.execute(
+            select(Price, Source.slug.label("source_slug"))
+            .join(Source, Price.source_id == Source.id)
+            .where(Price.cigar_id == cigar_id)
+        )
+        price_by_source: dict = {row.source_slug: row.Price for row in prices_r}
+
+        # 3. 每条别名 → 插入一条 UnmatchedItem
+        for alias in aliases:
+            slug = alias.source_slug
+            run_r = await db.execute(
+                select(ScraperRun)
+                .where(ScraperRun.source_slug == slug)
+                .order_by(ScraperRun.id.desc())
+                .limit(1)
+            )
+            run = run_r.scalar_one_or_none()
+            if not run:
+                continue
+            price = price_by_source.get(slug)
+            db.add(UnmatchedItem(
+                run_id=run.id,
+                source_slug=slug,
+                raw_name=alias.raw_name,
+                price_single=price.price_single if price else None,
+                price_box=price.price_box if price else None,
+                currency=price.currency if price else "USD",
+                product_url=price.product_url if price else None,
+            ))
+
+        # 4. 删除价格、历史、别名、雪茄本体
         await db.execute(_sql("DELETE FROM prices WHERE cigar_id = :cid"), {"cid": cigar_id})
         await db.execute(_sql("DELETE FROM price_history WHERE cigar_id = :cid"), {"cid": cigar_id})
         await db.execute(_sql("DELETE FROM scraper_name_aliases WHERE cigar_id = :cid"), {"cid": cigar_id})
@@ -2377,7 +2782,7 @@ async def search_cigars(request: Request, q: str = ""):
             stmt = stmt.where(Cigar.name.ilike(f"%{q}%"))
         r = await db.execute(stmt.limit(30))
         cigars = r.scalars().all()
-    return [{"id": c.id, "name": c.name} for c in cigars]
+    return [{"id": c.id, "name": html_mod.unescape(c.name)} for c in cigars]
 
 
 @router.post("/api/unmatched/{item_id}/link-alias")
@@ -2462,3 +2867,81 @@ async def link_unmatched_to_cigar(item_id: int, request: Request):
         await db.commit()
 
     return {"ok": True, "cigar_id": cigar_id, "cigar_name": cigar.name}
+
+
+@router.patch("/api/cigars/{cigar_id}/description")
+async def update_cigar_description(cigar_id: int, request: Request):
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    data = await request.json()
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(Cigar).where(Cigar.id == cigar_id))
+        cigar = r.scalar_one_or_none()
+        if not cigar:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        cigar.description = data.get("description") or None
+        await db.commit()
+    return {"ok": True}
+
+
+@router.post("/api/cigars/{cigar_id}/image/{slot}")
+async def upload_cigar_image(cigar_id: int, slot: str, request: Request, file: UploadFile = File(...)):
+    if slot not in ("single", "box"):
+        return JSONResponse({"error": "slot must be 'single' or 'box'"}, status_code=400)
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    # Determine extension from original filename or content-type
+    orig = file.filename or ""
+    ext = Path(orig).suffix.lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+        ext = ".jpg"
+
+    dest_dir = UPLOADS_DIR / "cigars" / str(cigar_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / f"{slot}{ext}"
+
+    # Remove any previous file for this slot (different extension)
+    for old in dest_dir.glob(f"{slot}.*"):
+        if old != dest_path:
+            old.unlink(missing_ok=True)
+
+    contents = await file.read()
+    dest_path.write_bytes(contents)
+
+    url = f"/uploads/cigars/{cigar_id}/{slot}{ext}"
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(Cigar).where(Cigar.id == cigar_id))
+        cigar = r.scalar_one_or_none()
+        if not cigar:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        if slot == "single":
+            cigar.image_single_url = url
+        else:
+            cigar.image_box_url = url
+        await db.commit()
+    return {"ok": True, "url": url}
+
+
+@router.delete("/api/cigars/{cigar_id}/image/{slot}")
+async def delete_cigar_image(cigar_id: int, slot: str, request: Request):
+    if slot not in ("single", "box"):
+        return JSONResponse({"error": "slot must be 'single' or 'box'"}, status_code=400)
+    if not _require_admin(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    dest_dir = UPLOADS_DIR / "cigars" / str(cigar_id)
+    for f in dest_dir.glob(f"{slot}.*"):
+        f.unlink(missing_ok=True)
+
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(Cigar).where(Cigar.id == cigar_id))
+        cigar = r.scalar_one_or_none()
+        if not cigar:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        if slot == "single":
+            cigar.image_single_url = None
+        else:
+            cigar.image_box_url = None
+        await db.commit()
+    return {"ok": True}

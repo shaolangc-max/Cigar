@@ -19,17 +19,28 @@ HEADERS = {
 
 BASE = "https://lacasadelhabano-geneve.com"
 
-_COUNT_RE    = re.compile(
-    r"(\d+)\s*(?:er|x)?\s*(?:kiste|schachtel|cigars?|stück|box|pack|pcs|unités?|boîte)",
+_COUNT_RE     = re.compile(
+    r"(\d+)\s*(?:er|x)?\s*(?:kiste|schachtel|cigars?|stück|box|pack|pcs|unités?|boîte)"
+    r"|(?:box|coffret|boite|kiste|schachtel)\s+(?:of|de|von)\s*(\d+)",
     re.I,
 )
-_HANDLE_RE   = re.compile(r"-(\d+)$")
-_KNOWN_SIZES = {3, 5, 10, 12, 15, 20, 25, 40, 50}
+_HANDLE_RE    = re.compile(r"-(\d+)$")
+_SLASH_RE     = re.compile(r"/(\d+)")
+_KNOWN_SIZES  = {3, 5, 10, 12, 15, 20, 25, 40, 50}
 
 
 def _count_from_handle(handle: str) -> int | None:
     m = _HANDLE_RE.search(handle)
     if m:
+        n = int(m.group(1))
+        if n in _KNOWN_SIZES:
+            return n
+    return None
+
+
+def _count_from_title(title: str) -> int | None:
+    """从标题的 /数量 格式提取支数（如 '/10'），仅认已知盒型尺寸。"""
+    for m in _SLASH_RE.finditer(title):
         n = int(m.group(1))
         if n in _KNOWN_SIZES:
             return n
@@ -61,7 +72,7 @@ def _parse(products: list[dict], source_slug: str) -> list[ScrapedItem]:
 
             vt_lower  = vt.lower()
             count_m   = _COUNT_RE.search(vt_lower)
-            count     = int(count_m.group(1)) if count_m else None
+            count     = int(count_m.group(1) or count_m.group(2)) if count_m else None
             is_single = (
                 "einzeln" in vt_lower
                 or "single" in vt_lower
@@ -81,9 +92,9 @@ def _parse(products: list[dict], source_slug: str) -> list[ScrapedItem]:
                 if price_single is None:
                     price_single = price
 
-        # 变体标题未能识别数量时，从 handle 回退提取
+        # 变体标题未能识别数量时，依次从 handle、产品标题回退提取
         if box_count is None and price_single is not None:
-            n = _count_from_handle(handle)
+            n = _count_from_handle(handle) or _count_from_title(title)
             if n:
                 box_count    = n
                 price_box    = price_single

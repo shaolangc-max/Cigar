@@ -302,6 +302,88 @@ export default async function CigarPage({
         <VersionsSwitcher versions={data.versions} />
       </div>
 
+      {/* Description & Photos */}
+      {(data.description || data.image_single_url || data.image_box_url) && (
+        <div style={{
+          borderRadius: 16,
+          backgroundColor: "var(--apple-surface)",
+          border: "1px solid var(--apple-border)",
+          padding: "24px 32px",
+          boxShadow: "0 1px 6px rgba(0,0,0,0.04)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 20,
+        }}>
+          {/* Description */}
+          {data.description && (
+            <div>
+              <p style={{
+                fontSize: 11, fontWeight: 700, color: "var(--apple-tertiary)",
+                letterSpacing: "0.08em", textTransform: "uppercase", margin: "0 0 10px 0",
+              }}>
+                说明
+              </p>
+              <p style={{ fontSize: 14, lineHeight: 1.75, color: "var(--apple-secondary)", whiteSpace: "pre-wrap" }}>
+                {data.description}
+              </p>
+            </div>
+          )}
+
+          {/* Divider between description and photos */}
+          {data.description && (data.image_single_url || data.image_box_url) && (
+            <hr style={{ border: "none", borderTop: "1px solid var(--apple-separator)", margin: 0 }} />
+          )}
+
+          {/* Photos */}
+          {(data.image_single_url || data.image_box_url) && (
+            <div>
+              <p style={{
+                fontSize: 11, fontWeight: 700, color: "var(--apple-tertiary)",
+                letterSpacing: "0.08em", textTransform: "uppercase", margin: "0 0 12px 0",
+              }}>
+                图片
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                {data.image_single_url && (
+                  <div>
+                    <p style={{ fontSize: 12, fontWeight: 500, color: "var(--apple-tertiary)", marginBottom: 8 }}>
+                      单只照片
+                    </p>
+                    <div style={{
+                      aspectRatio: "4/3", borderRadius: 12, overflow: "hidden",
+                      border: "1px solid var(--apple-border)",
+                    }}>
+                      <img
+                        src={data.image_single_url}
+                        alt="单只照片"
+                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                      />
+                    </div>
+                  </div>
+                )}
+                {data.image_box_url && (
+                  <div>
+                    <p style={{ fontSize: 12, fontWeight: 500, color: "var(--apple-tertiary)", marginBottom: 8 }}>
+                      成盒照片
+                    </p>
+                    <div style={{
+                      aspectRatio: "4/3", borderRadius: 12, overflow: "hidden",
+                      border: "1px solid var(--apple-border)",
+                    }}>
+                      <img
+                        src={data.image_box_url}
+                        alt="成盒照片"
+                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Price Tables */}
       {data.prices.length === 0 ? (
         <div style={{

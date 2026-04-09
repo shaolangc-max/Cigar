@@ -1,9 +1,12 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+import os
+from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import func, select
 
@@ -78,6 +81,10 @@ app.include_router(alerts.router, prefix="/api/v1")
 app.include_router(scraper_admin.router, prefix="/api/v1")
 app.include_router(admin_tools.router)
 app.include_router(catalog_admin.router)
+
+_uploads_dir = Path(os.getenv("UPLOADS_DIR", "/mnt/nvme/workspaces/cigar/uploads"))
+_uploads_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(_uploads_dir)), name="uploads")
 
 
 @app.get("/api/v1/health")

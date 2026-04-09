@@ -70,6 +70,9 @@ export interface CigarDetail {
   edition_type: string | null;
   edition: string | null;
   parent_cigar_id: number | null;
+  description: string | null;
+  image_single_url: string | null;
+  image_box_url: string | null;
   series: { name: string; slug: string };
   brand: { name: string; slug: string };
   prices: PriceRow[];

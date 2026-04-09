@@ -91,6 +91,11 @@ def _parse(products: list[dict], source_slug: str) -> list[ScrapedItem]:
                 box_count    = n
                 price_box    = price_single
                 price_single = None
+            elif len(variants) == 1 and variants[0].get("title", "").lower() == "default title":
+                # 单变体 Default Title 且 handle 无数字：无法从标题判断支数，
+                # 但此类产品均为盒装/礼盒，不单支销售，统一归入 price_box
+                price_box    = price_single
+                price_single = None
 
         if price_single is not None or price_box is not None:
             items.append(ScrapedItem(
