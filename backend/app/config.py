@@ -1,7 +1,8 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     database_url: str
     exchange_rate_api_key: str = ""
     scraper_concurrency: int = 5
@@ -31,8 +32,6 @@ class Settings(BaseSettings):
     # CORS — 正则来源，覆盖整个 192.168.31.x 局域网段（任意端口）
     cors_origin_regex: str = r"http://192\.168\.31\.\d{1,3}(:\d+)?"
 
-    class Config:
-        env_file = ".env"
 
 
 settings = Settings()
