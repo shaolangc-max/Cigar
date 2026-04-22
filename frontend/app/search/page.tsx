@@ -69,11 +69,7 @@ function QuotaModal({ onClose }: { onClose: () => void }) {
 }
 
 export default function SearchPage() {
-  const initialQ = typeof window !== "undefined"
-    ? new URLSearchParams(window.location.search).get("q") ?? ""
-    : "";
-
-  const [q, setQ]               = useState(initialQ);
+  const [q, setQ]               = useState("");
   const [results, setResults]   = useState<CigarSummary[]>([]);
   const [searched, setSearched] = useState(false);
   const [loading, setLoading]   = useState(false);
@@ -82,7 +78,11 @@ export default function SearchPage() {
 
   // 页面加载时如果 URL 有 ?q= 参数，自动执行搜索
   useEffect(() => {
-    if (initialQ.trim()) doSearch(initialQ);
+    const urlQ = new URLSearchParams(window.location.search).get("q") ?? "";
+    if (urlQ.trim()) {
+      setQ(urlQ);
+      doSearch(urlQ);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
