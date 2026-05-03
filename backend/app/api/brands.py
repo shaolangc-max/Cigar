@@ -15,7 +15,7 @@ SUPPORTED_CURRENCIES = {"CNY", "HKD", "USD", "EUR"}
 async def list_brands(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Brand)
-        .options(selectinload(Brand.series).selectinload(Series.cigars))
+        .options(selectinload(Brand.series).selectinload(Series.cigars).selectinload(Cigar.prices))
         .order_by(Brand.name)
     )
     brands = result.scalars().all()
@@ -26,7 +26,7 @@ async def list_brands(db: AsyncSession = Depends(get_db)):
             "slug":        b.slug,
             "country":     b.country,
             "image_url":   b.image_url,
-            "cigar_count": sum(len(s.cigars) for s in b.series),
+            "cigar_count": sum(1 for s in b.series for c in s.cigars if c.prices),
         }
         for b in brands
     ]
@@ -93,6 +93,8 @@ async def get_brand(
     uncategorized_by_series: dict[int, tuple[Series, list[dict]]] = {}
 
     for cigar, series in all_cigars:
+        if not cigar.prices:
+            continue
         payload = cigar_payload(cigar, series)
         if cigar.category_id and cigar.category_id in cat_cigars:
             cat_cigars[cigar.category_id].append(payload)

@@ -22,8 +22,8 @@ async def main():
 
     # 每4小时爬取一次
     scheduler.add_job(run_all_scrapers, "interval", hours=4, id="scrape")
-    # 每小时更新汇率
-    scheduler.add_job(update_exchange_rates, "interval", hours=1, id="fx")
+    # 每天更新汇率
+    scheduler.add_job(update_exchange_rates, "interval", hours=24, id="fx")
 
     scheduler.start()
     log.info("Scheduler started. Next scrape in 4 hours.")

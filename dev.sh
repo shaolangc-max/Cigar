@@ -31,6 +31,12 @@ PYTHONPATH="$BACKEND" DATABASE_URL="$DB" \
   "$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8000 --reload &
 BACKEND_PID=$!
 
+# ── 启动调度器 ────────────────────────────────────────────────────────────────
+echo "▶ 启动调度器（爬虫每4h / 汇率每24h）"
+PYTHONPATH="$BACKEND" DATABASE_URL="$DB" \
+  "$VENV/bin/python" -m app.scheduler.runner &
+SCHEDULER_PID=$!
+
 # ── 安装前端依赖 ──────────────────────────────────────────────────────────────
 cd "$FRONTEND"
 if [ ! -d node_modules ]; then
@@ -52,5 +58,5 @@ echo "   前端     : http://localhost:3001"
 echo ""
 echo "按 Ctrl+C 停止所有服务"
 
-trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit" INT TERM
+trap "kill $BACKEND_PID $SCHEDULER_PID $FRONTEND_PID 2>/dev/null; exit" INT TERM
 wait
